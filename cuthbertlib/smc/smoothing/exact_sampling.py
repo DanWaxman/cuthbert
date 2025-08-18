@@ -1,4 +1,4 @@
-import jax.tree
+import jax
 from jax import numpy as jnp
 from jax import random, vmap
 from jax.scipy.special import logsumexp
@@ -27,7 +27,7 @@ def log_weights_single(
         x0: The previous state.
         x1: The current state.
         log_weight_x0: The log weights of the previous state.
-        log_density: The log density of x1 given x0.
+        log_density: The log density function of x1 given x0.
 
     Returns:
         The smoothing weight for sample x0 given a single sample x1.
@@ -37,18 +37,17 @@ def log_weights_single(
 
 def log_weights(x0_all, x1, log_weight_x0_all, log_density) -> Array:
     """
-        Compute smoothing weights given a collection of samples from x0 with
-        accompanying log weights, a single sample x1 and a log conditional density
-    py    p(x1 | x0).
+    Compute smoothing weights given a collection of samples from x0 with
+    accompanying log weights, a single sample x1 and a log conditional density p(x1 | x0).
 
-        Args:
-            x0_all: Collection of previous states.
-            x1: The current state.
-            log_weight_x0_all: Collection of log weights of the previous state.
-            log_density: The log density of x1 given x0.
+    Args:
+        x0_all: Collection of previous states.
+        x1: The current state.
+        log_weight_x0_all: Collection of log weights of the previous state.
+        log_density: The log density function of x1 given x0.
 
-        Returns:
-            Log normalized smoothing weights for each sample x0 given single sample x1.
+    Returns:
+        Log normalized smoothing weights for each sample x0 given single sample x1.
     """
     backward_log_weights_all = vmap(
         lambda x0, log_weight_x0: log_weights_single(x0, x1, log_weight_x0, log_density)
@@ -73,7 +72,7 @@ def simulate_single(
         x0_all: Collection of previous states.
         x1: The current state.
         log_weight_x0_all: Collection of log weights of the previous state.
-        log_density: The log density of x1 given x0.
+        log_density: The log density function of x1 given x0.
 
     Returns:
         A single sample x0 from the smoothing trajectory along with its index.
@@ -89,9 +88,12 @@ def simulate(
     x1_all: ArrayTreeLike,
     log_weight_x0_all: ArrayLike,
     log_density: LogConditionalDensity,
+    x1_ancestor_indices: ArrayLike,
 ) -> tuple[ArrayTree, Array]:
     """
-    Sample a collection of x0 that combine with the provided x1 to give a collection of
+    An implementation of the exact backward sampling algorithm for smoothing in SMC.
+
+    Samples a collection of x0 that combine with the provided x1 to give a collection of
     pairs (x0, x1) from the smoothing distribution.
 
     Args:
@@ -99,13 +101,15 @@ def simulate(
         x0_all: Collection of previous states.
         x1_all: Collection of current states.
         log_weight_x0_all: Collection of log weights of the previous state.
-        log_density: The log density of x1 given x0.
+        log_density: The log density function of x1 given x0.
+        x1_ancestor_indices: The ancestor indices of x1. Not used.
 
     Returns:
         A collection of x0 and their sampled indices.
     """
     log_weight_x0_all = jnp.asarray(log_weight_x0_all)
-    keys = random.split(key, log_weight_x0_all.shape[0])
+    n_smoother_particles = jax.tree.leaves(x1_all)[0].shape[0]
+    keys = random.split(key, n_smoother_particles)
 
     return vmap(
         lambda k, x1: simulate_single(k, x0_all, x1, log_weight_x0_all, log_density)

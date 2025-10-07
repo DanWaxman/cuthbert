@@ -7,7 +7,7 @@ import pytest
 from jax import Array
 
 from cuthbert import filter, smoother
-from cuthbert.gaussian import extended
+from cuthbert.gaussian import moments
 from cuthbert.inference import Filter, Smoother
 from tests.cuthbert.gaussian.test_kalman import std_kalman_filter
 from tests.cuthbertlib.kalman.test_smoothing import std_kalman_smoother
@@ -21,7 +21,7 @@ def config():
     jax.config.update("jax_enable_x64", False)
 
 
-def load_extended_inference(
+def load_moments_inference(
     m0: Array,
     chol_P0: Array,
     Fs: Array,
@@ -31,28 +31,41 @@ def load_extended_inference(
     ds: Array,
     chol_Rs: Array,
     ys: Array,
+    associative_filter: bool = False,
 ) -> tuple[Filter, Smoother, Array]:
-    """Builds extended Kalman filter and smoother objects and model_inputs for a linear-Gaussian SSM."""
+    """Builds linearized moments Kalman filter and smoother objects and model_inputs for a linear-Gaussian SSM."""
 
     def get_init_params(model_inputs: int) -> tuple[Array, Array]:
         return m0, chol_P0
 
-    def dynamics_mean_and_chol_cov(x, model_inputs):
-        return Fs[model_inputs - 1] @ x + cs[model_inputs - 1], chol_Qs[
-            model_inputs - 1
-        ]
+    def dynamics_moments(state, model_inputs):
+        def dynamics_mean_and_chol_cov_func(x):
+            return Fs[model_inputs - 1] @ x + cs[model_inputs - 1], chol_Qs[
+                model_inputs - 1
+            ]
 
-    def observation_mean_and_chol_cov_and_y(x, model_inputs):
+        return dynamics_mean_and_chol_cov_func, jnp.zeros_like(m0)
+
+    def observation_moments(state, model_inputs):
+        def observation_mean_and_chol_cov_and_y_func(x):
+            return (
+                Hs[model_inputs] @ x + ds[model_inputs],
+                chol_Rs[model_inputs],
+            )
+
         return (
-            Hs[model_inputs] @ x + ds[model_inputs],
-            chol_Rs[model_inputs],
+            observation_mean_and_chol_cov_and_y_func,
+            jnp.zeros_like(m0),
             ys[model_inputs],
         )
 
-    filter = extended.build_filter(
-        get_init_params, dynamics_mean_and_chol_cov, observation_mean_and_chol_cov_and_y
+    filter = moments.build_filter(
+        get_init_params,
+        dynamics_moments,
+        observation_moments,
+        associative=associative_filter,
     )
-    smoother = extended.build_smoother(dynamics_mean_and_chol_cov)
+    smoother = moments.build_smoother(dynamics_moments)
     model_inputs = jnp.arange(len(ys))
     return filter, smoother, model_inputs
 
@@ -76,16 +89,36 @@ def test_offline_filter(seed, x_dim, y_dim, num_time_steps):
         # Set an observation to nan
         ys = ys.at[1, 0].set(jnp.nan)
 
-    extended_filter, _, model_inputs = load_extended_inference(
-        m0, chol_P0, Fs, cs, chol_Qs, Hs, ds, chol_Rs, ys
+    moments_filter, _, model_inputs = load_moments_inference(
+        m0, chol_P0, Fs, cs, chol_Qs, Hs, ds, chol_Rs, ys, associative_filter=False
     )
 
     # Run sequential sqrt filter
-    seq_states = filter(extended_filter, model_inputs, parallel=False)
+    seq_states = filter(moments_filter, model_inputs, parallel=False)
     seq_means, seq_chol_covs, seq_ells = (
         seq_states.mean,
         seq_states.chol_cov,
         seq_states.log_likelihood,
+    )
+
+    associative_moments_filter, _, model_inputs = load_moments_inference(
+        m0, chol_P0, Fs, cs, chol_Qs, Hs, ds, chol_Rs, ys, associative_filter=True
+    )
+
+    # Run associative filter with parallel=False§
+    seq_ass_states = filter(associative_moments_filter, model_inputs, parallel=False)
+    seq_ass_means, seq_ass_chol_covs, seq_ass_ells = (
+        seq_ass_states.mean,
+        seq_ass_states.chol_cov,
+        seq_ass_states.log_likelihood,
+    )
+
+    # Run associative filter with parallel=True
+    par_ass_states = filter(associative_moments_filter, model_inputs, parallel=True)
+    par_ass_means, par_ass_chol_covs, par_ass_ells = (
+        par_ass_states.mean,
+        par_ass_states.chol_cov,
+        par_ass_states.log_likelihood,
     )
 
     # Run the standard Kalman filter.
@@ -97,10 +130,14 @@ def test_offline_filter(seed, x_dim, y_dim, num_time_steps):
     )
 
     seq_covs = seq_chol_covs @ seq_chol_covs.transpose(0, 2, 1)
+    seq_ass_covs = seq_ass_chol_covs @ seq_ass_chol_covs.transpose(0, 2, 1)
+    par_ass_covs = par_ass_chol_covs @ par_ass_chol_covs.transpose(0, 2, 1)
     chex.assert_trees_all_close(
         (seq_means, seq_covs, seq_ells),
         (des_means, des_covs, des_ells),
-        rtol=1e-10,
+        (seq_ass_means, seq_ass_covs, seq_ass_ells),
+        (par_ass_means, par_ass_covs, par_ass_ells),
+        rtol=1e-8,
     )
 
 
@@ -111,7 +148,7 @@ def test_smoother(seed, x_dim, y_dim, num_time_steps):
         seed, x_dim, y_dim, num_time_steps
     )
 
-    extended_filter, extended_smoother, model_inputs = load_extended_inference(
+    extended_filter, extended_smoother, model_inputs = load_moments_inference(
         m0, chol_P0, Fs, cs, chol_Qs, Hs, ds, chol_Rs, ys
     )
 

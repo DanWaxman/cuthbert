@@ -1,5 +1,7 @@
-r"""Linearized Kalman filter that takes a user provided conditional `mean` and
-`chol_cov` functions to define a conditionally linear Gaussian state space model.
+r"""Linearized moments Kalman filter.
+
+Takes a user provided conditional `mean` and `chol_cov` functions to define a
+conditionally linear Gaussian state space model.
 
 I.e., we approximate conditional densities as
 
@@ -28,8 +30,7 @@ def build_filter(
     get_observation_params: GetObservationMoments,
     associative: bool = False,
 ) -> Filter:
-    """
-    Build linearized moments Kalman inference filter.
+    """Build linearized moments Kalman inference filter.
 
     If `associative` is True all filtering linearization points are pre-defined or
     extracted from model inputs. The `state` argument should be ignored in
@@ -58,7 +59,6 @@ def build_filter(
     Returns:
         Linearized moments Kalman filter object.
     """
-
     if associative:
         return Filter(
             init_prepare=partial(

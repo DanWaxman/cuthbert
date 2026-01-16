@@ -1,3 +1,5 @@
+"""Implements the associative linearized Taylor Kalman filter."""
+
 from jax import eval_shape, tree
 from jax import numpy as jnp
 
@@ -27,8 +29,7 @@ def init_prepare(
     ignore_nan_dims: bool = False,
     key: KeyArray | None = None,
 ) -> LinearizedKalmanFilterState:
-    """
-    Prepare the initial state for the linearized Taylor Kalman filter.
+    """Prepare the initial state for the linearized Taylor Kalman filter.
 
     Args:
         model_inputs: Model inputs.
@@ -113,9 +114,7 @@ def filter_prepare(
     ignore_nan_dims: bool = False,
     key: KeyArray | None = None,
 ) -> LinearizedKalmanFilterState:
-    """
-    Prepare a state for a linearized Taylor Kalman filter step,
-    just passes through model inputs.
+    """Prepare a state for a linearized Taylor Kalman filter step.
 
     `associative_scan` is supported but only accurate when `state` is ignored
     in `get_dynamics_log_density` and `get_observation_func`.
@@ -195,9 +194,7 @@ def filter_combine(
     state_1: LinearizedKalmanFilterState,
     state_2: LinearizedKalmanFilterState,
 ) -> LinearizedKalmanFilterState:
-    """
-    Combine filter state from previous time point with state prepared
-    with latest model inputs.
+    """Combine previous filter state with state prepared with latest model inputs.
 
     `associative_scan` is supported but only accurate when `state` is ignored
     in `get_dynamics_log_density` and `get_observation_func`.

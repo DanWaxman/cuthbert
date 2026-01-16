@@ -1,3 +1,5 @@
+"""Unified cuthbert filtering interface."""
+
 import warnings
 
 from jax import numpy as jnp
@@ -29,7 +31,6 @@ def filter(
     Returns:
         The filtered states (NamedTuple with leading temporal dimension of length T + 1).
     """
-
     if parallel and not filter_obj.associative:
         warnings.warn(
             f"Parallel filtering attempted but filter.associative is False for {filter_obj}"

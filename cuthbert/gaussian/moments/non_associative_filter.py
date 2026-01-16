@@ -1,3 +1,5 @@
+"""Implements the non-associative linearized moments Kalman filter."""
+
 from jax import eval_shape, tree
 from jax import numpy as jnp
 
@@ -16,8 +18,7 @@ def init_prepare(
     get_observation_params: GetObservationMoments,
     key: KeyArray | None = None,
 ) -> LinearizedKalmanFilterState:
-    """
-    Prepare the initial state for the linearized moments Kalman filter.
+    """Prepare the initial state for the linearized moments Kalman filter.
 
     Args:
         model_inputs: Model inputs.
@@ -68,9 +69,9 @@ def filter_prepare(
     get_init_params: GetInitParams,
     key: KeyArray | None = None,
 ) -> LinearizedKalmanFilterState:
-    """
-    Prepare a state for a linearized moments Kalman filter step,
-    just passes through model inputs.
+    """Prepare a state for a linearized moments Kalman filter step.
+
+    Just passes through model inputs.
 
     Args:
         model_inputs: Model inputs.
@@ -101,9 +102,7 @@ def filter_combine(
     get_dynamics_params: GetDynamicsMoments,
     get_observation_params: GetObservationMoments,
 ) -> LinearizedKalmanFilterState:
-    """
-    Combine filter state from previous time point with state prepared
-    with latest model inputs.
+    """Combine previous filter state with state prepared with latest model inputs.
 
     Applies linearized moments Kalman predict + filter update in covariance square
     root form.
@@ -123,7 +122,6 @@ def filter_combine(
             Contains mean, chol_cov (generalised Cholesky factor of covariance)
             and log_normalizing_constant.
     """
-
     dynamics_mean_and_chol_cov_func, dynamics_linearization_point = get_dynamics_params(
         state_1, state_2.model_inputs
     )

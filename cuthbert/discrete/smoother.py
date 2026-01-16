@@ -1,5 +1,4 @@
-"""
-Parallel-in-time Bayesian smoother for discrete hidden Markov models.
+"""Parallel-in-time Bayesian smoother for discrete hidden Markov models.
 
 References:
     - https://ieeexplore.ieee.org/document/9512397
@@ -21,11 +20,17 @@ from cuthbertlib.types import Array, ArrayTree, ArrayTreeLike, KeyArray
 
 
 class DiscreteSmootherState(NamedTuple):
+    """Discrete smoother state."""
+
     a: Array
     model_inputs: ArrayTree
 
     @property
     def dist(self):
+        """The smoothed distribution.
+
+        Has shape (K,) or (T+1, K) where K is the number of possible states.
+        """
         return jnp.take(self.a, 0, axis=-2)
 
 
@@ -103,8 +108,7 @@ def convert_filter_to_smoother_state(
 def smoother_combine(
     state_1: DiscreteSmootherState, state_2: DiscreteSmootherState
 ) -> DiscreteSmootherState:
-    """Combine the smoother state from the next time point with the state
-    prepared with the latest model inputs.
+    """Combine smoother state from next time point with state prepared with latest model inputs.
 
     Remember smoothing iterates backwards in time.
 

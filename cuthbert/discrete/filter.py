@@ -1,5 +1,4 @@
-"""
-Parallel-in-time Bayesian filter for discrete hidden Markov models.
+"""Parallel-in-time Bayesian filter for discrete hidden Markov models.
 
 References:
     - https://ieeexplore.ieee.org/document/9512397
@@ -24,15 +23,22 @@ from cuthbertlib.types import Array, ArrayTree, ArrayTreeLike, KeyArray
 
 
 class DiscreteFilterState(NamedTuple):
+    """Discrete filter state."""
+
     elem: filtering.FilterScanElement
     model_inputs: ArrayTree
 
     @property
     def dist(self) -> Array:
+        """The filtered distribution.
+
+        Has shape (K,) or (T+1, K) where K is the number of possible states.
+        """
         return jnp.take(self.elem.f, 0, axis=-2)
 
     @property
     def log_normalizing_constant(self) -> Array:
+        """Log normalizing constant (cumulative)."""
         return jnp.take(self.elem.log_g, 0, axis=-1)
 
 
@@ -121,15 +127,14 @@ def filter_prepare(
 def filter_combine(
     state_1: DiscreteFilterState, state_2: DiscreteFilterState
 ) -> DiscreteFilterState:
-    """Combine the filter state from the previous time point with the state
-    prepared with the latest model inputs.
+    """Combine previous filter state with state prepared with latest model inputs.
 
     Args:
-        state_1: State from the previous time step.
-        state_2: State prepared with the latest model inputs.
+        state_1: State from previous time step.
+        state_2: State prepared (only access model_inputs attribute).
 
     Returns:
-        Combined filter state.
+        Combined filter state. Contains distribution and log_normalizing_constant.
     """
     combined_elem = filtering.filtering_operator(state_1.elem, state_2.elem)
     return DiscreteFilterState(elem=combined_elem, model_inputs=state_2.model_inputs)

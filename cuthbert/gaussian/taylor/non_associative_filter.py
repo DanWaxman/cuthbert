@@ -1,3 +1,5 @@
+"""Implements the non-associative linearized Taylor Kalman filter."""
+
 from jax import eval_shape, tree
 from jax import numpy as jnp
 
@@ -27,7 +29,6 @@ def process_observation(
     ignore_nan_dims: bool = False,
 ) -> tuple[Array, Array, Array, Array]:
     """Process observation for linearized Taylor Kalman filter."""
-
     if len(observation_output) == 3:
         observation_cond_log_density, linearization_point, observation = (
             observation_output
@@ -65,8 +66,7 @@ def init_prepare(
     ignore_nan_dims: bool = False,
     key: KeyArray | None = None,
 ) -> LinearizedKalmanFilterState:
-    """
-    Prepare the initial state for the linearized Taylor Kalman filter.
+    """Prepare the initial state for the linearized Taylor Kalman filter.
 
     Args:
         model_inputs: Model inputs.
@@ -136,9 +136,9 @@ def filter_prepare(
     get_init_log_density: GetInitLogDensity,
     key: KeyArray | None = None,
 ) -> LinearizedKalmanFilterState:
-    """
-    Prepare a state for a linearized Taylor Kalman filter step,
-    just passes through model inputs.
+    """Prepare a state for a linearized Taylor Kalman filter step.
+
+    Just passes through model inputs.
 
     Args:
         model_inputs: Model inputs.
@@ -171,9 +171,7 @@ def filter_combine(
     rtol: float | None = None,
     ignore_nan_dims: bool = False,
 ) -> LinearizedKalmanFilterState:
-    """
-    Combine filter state from previous time point with state prepared
-    with latest model inputs.
+    """Combine previous filter state with state prepared from latest model inputs.
 
     Applies linearized Taylor Kalman predict + filter update in covariance square
     root form.
@@ -202,7 +200,6 @@ def filter_combine(
             Contains mean, chol_cov (generalised Cholesky factor of covariance)
             and log_normalizing_constant.
     """
-
     log_dynamics_density, linearization_point_prev, linearization_point_curr = (
         get_dynamics_log_density(state_1, state_2.model_inputs)
     )

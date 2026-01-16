@@ -1,3 +1,5 @@
+"""Implements the square root parallel Kalman filter and associative variant."""
+
 from typing import NamedTuple
 
 import jax.numpy as jnp
@@ -27,8 +29,7 @@ def predict(
     c: ArrayLike,
     chol_Q: ArrayLike,
 ) -> tuple[Array, Array]:
-    """
-    Propagate the mean and square root covariance through linear Gaussian dynamics.
+    """Propagate the mean and square root covariance through linear Gaussian dynamics.
 
     Args:
         m: Mean of the state.
@@ -62,8 +63,7 @@ def update(
     y: ArrayLike,
     log_normalizing_constant: ArrayLike = 0.0,
 ) -> tuple[tuple[Array, Array], Array]:
-    """
-    Update the mean and square root covariance with a linear Gaussian observation.
+    """Update the mean and square root covariance with a linear Gaussian observation.
 
     Args:
         m: Mean of the state.
@@ -116,9 +116,20 @@ def update(
 def associative_params_single(
     F: Array, c: Array, chol_Q: Array, H: Array, d: Array, chol_R: Array, y: Array
 ) -> FilterScanElement:
-    """Compute the filter scan element for the square root parallel Kalman
-    filter for a single time step, with observation guaranteed not to be missing."""
+    """Single time step for scan element for square root parallel Kalman filter.
 
+    Args:
+        F: State transition matrix.
+        c: State transition shift vector.
+        chol_Q: Generalized Cholesky factor of the state transition noise covariance.
+        H: Observation matrix.
+        d: Observation shift.
+        chol_R: Generalized Cholesky factor of the observation noise covariance.
+        y: Observation.
+
+    Returns:
+        Prepared scan element for the square root parallel Kalman filter.
+    """
     # Handle case where there is no observation
     flag = jnp.isnan(y)
     flag, chol_R, H, d, y = collect_nans_chol(flag, chol_R, H, d, y)

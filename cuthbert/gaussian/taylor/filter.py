@@ -1,6 +1,9 @@
-r"""Linearized Kalman filter and smoother that uses automatic differentiation to extract
-conditionally Gaussian parameters from log densities of the dynamics and observation
-distributions. This differs from `gaussian/moments`, which requires `mean` and `chol_cov`
+r"""Linearized Taylor Kalman filter.
+
+Uses automatic differentiation to extract conditionally Gaussian parameters from log
+densities of the dynamics and observation distributions.
+
+This differs from `gaussian/moments`, which requires `mean` and `chol_cov`
 functions as input rather than log densities.
 
 I.e., we approximate conditional densities as
@@ -43,8 +46,7 @@ def build_filter(
     rtol: float | None = None,
     ignore_nan_dims: bool = False,
 ) -> Filter:
-    """
-    Build linearized Taylor Kalman inference filter.
+    """Build linearized Taylor Kalman inference filter.
 
     If `associative` is True all filtering linearization points are pre-defined or
     extracted from model inputs. The `state` argument should be ignored in
@@ -83,7 +85,6 @@ def build_filter(
     Returns:
         Linearized Taylor Kalman filter object.
     """
-
     if associative:
         return Filter(
             init_prepare=partial(

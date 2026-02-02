@@ -28,9 +28,7 @@ override-dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["cuthbert*", "cuthbertlib*"]
-exclude = ["tests*"]
 
 [project.optional-dependencies]
 tests = [

@@ -53,3 +53,24 @@ jobs:
         path: dist/
     - name: Publish distribution 📦 to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
+
+
+  test-install:
+    name: Test install from PyPI
+    needs: publish-to-pypi
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Give PyPI some time to update the index
+        run: sleep 240
+
+      - name: Install from PyPI and import
+        run: |
+          pip install "cuthbert==${GITHUB_REF_NAME#v}"
+          python -c "import cuthbert; import cuthbert.discrete"
+          python -c "import cuthbertlib; import cuthbertlib.discrete"

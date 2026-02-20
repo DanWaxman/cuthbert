@@ -1,6 +1,7 @@
-"""Implements the generic particle filter.
+"""Implements the generic particle filter. Implements stop-gradient resampling for score estimation.
 
-See Algorithm 10.1, [Chopin and Papaspiliopoulos, 2020](https://doi.org/10.1007/978-3-030-47845-2).
+See Algorithm 10.1 for the standard PF algorithm, [Chopin and Papaspiliopoulos, 2020](https://doi.org/10.1007/978-3-030-47845-2).
+See Algorithm 1 for the stop-gradient PF resampling, [Ścibior & Wood (2021)](https://arxiv.org/abs/2106.10314).
 """
 
 from functools import partial
@@ -41,7 +42,6 @@ def build_filter(
     n_filter_particles: int,
     resampling_fn: Resampling,
     ess_threshold: float,
-    differentiable_resampling: bool = False,
 ) -> Filter:
     r"""Builds a particle filter object.
 
@@ -54,9 +54,6 @@ def build_filter(
         ess_threshold: Fraction of particle count specifying when to resample.
             Resampling is triggered when the
             effective sample size (ESS) < ess_threshold * n_filter_particles.
-        differentiable_resampling: If True, uses the stop-gradient resampling surrogate
-            of Ścibior & Wood (2021) so that automatic differentiation produces a
-            score estimator without changing the forward pass (up to constants).
 
     Returns:
         Filter object for the particle filter.
@@ -78,7 +75,6 @@ def build_filter(
             log_potential=log_potential,
             resampling_fn=resampling_fn,
             ess_threshold=ess_threshold,
-            differentiable_resampling=differentiable_resampling,
         ),
         associative=False,
     )
@@ -176,7 +172,6 @@ def filter_combine(
     log_potential: LogPotential,
     resampling_fn: Resampling,
     ess_threshold: float,
-    differentiable_resampling: bool,
 ) -> ParticleFilterState:
     """Combine previous filter state with the state prepared for the current step.
 
@@ -191,8 +186,6 @@ def filter_combine(
         resampling_fn: Resampling algorithm to use (e.g., systematic, multinomial).
         ess_threshold: Fraction of particle count specifying when to resample.
             Resampling is triggered when the effective sample size (ESS) < ess_threshold * N.
-        differentiable_resampling: If True, uses the stop-gradient resampling surrogate
-            of Ścibior & Wood (2021) for gradient computation.
 
     Returns:
         The filtered state at the current time step.
@@ -202,11 +195,7 @@ def filter_combine(
 
     log_weights_bar_prev = state_1.log_weights - jax.nn.logsumexp(state_1.log_weights)
 
-    def _resample_standard():
-        ancestor_idx = resampling_fn(keys[0], state_1.log_weights, N)
-        return ancestor_idx, jnp.zeros(N)
-
-    def _resample_differentiable():
+    def _resample():
         ancestor_idx = resampling_fn(
             keys[0], jax.lax.stop_gradient(log_weights_bar_prev), N
         )
@@ -219,14 +208,9 @@ def filter_combine(
             state_1.log_weights
         )
 
-    if differentiable_resampling:
-        _resample_fn = _resample_differentiable
-    else:
-        _resample_fn = _resample_standard
-
     ancestor_indices, log_weights = jax.lax.cond(
         log_ess(state_1.log_weights) < jnp.log(ess_threshold * N),
-        _resample_fn,
+        _resample,
         _no_resample,
     )
     ancestors = tree.map(lambda x: x[ancestor_indices], state_1.particles)

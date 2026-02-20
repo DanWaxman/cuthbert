@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numba as nb
 import numpy as np
-from jax.lax import platform_dependent
+from jax.lax import platform_dependent, stop_gradient
 from jax.scipy.special import logsumexp
 
 from cuthbertlib.types import Array, ArrayLike
@@ -31,7 +31,7 @@ def inverse_cdf(sorted_uniforms: ArrayLike, logits: ArrayLike) -> Array:
     """
     weights = jnp.exp(logits - logsumexp(logits))
     return platform_dependent(
-        sorted_uniforms, weights, default=_inverse_cdf_default
+        sorted_uniforms, weights, cpu=_inverse_cdf_cpu, default=_inverse_cdf_default
     )
 
 

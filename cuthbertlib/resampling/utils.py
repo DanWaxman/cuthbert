@@ -31,7 +31,7 @@ def inverse_cdf(sorted_uniforms: ArrayLike, logits: ArrayLike) -> Array:
     """
     weights = jnp.exp(logits - logsumexp(logits))
     return platform_dependent(
-        sorted_uniforms, weights, cpu=_inverse_cdf_cpu, default=_inverse_cdf_default
+        sorted_uniforms, weights, default=_inverse_cdf_default
     )
 
 

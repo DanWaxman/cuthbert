@@ -41,6 +41,7 @@ def build_filter(
     n_filter_particles: int,
     resampling_fn: Resampling,
     ess_threshold: float,
+    differentiable_resampling: bool = False,
 ) -> Filter:
     r"""Builds a particle filter object.
 
@@ -53,6 +54,9 @@ def build_filter(
         ess_threshold: Fraction of particle count specifying when to resample.
             Resampling is triggered when the
             effective sample size (ESS) < ess_threshold * n_filter_particles.
+        differentiable_resampling: If True, uses the stop-gradient resampling surrogate
+            of Ścibior & Wood (2021) so that automatic differentiation produces a
+            score estimator without changing the forward pass (up to constants).
 
     Returns:
         Filter object for the particle filter.
@@ -74,6 +78,7 @@ def build_filter(
             log_potential=log_potential,
             resampling_fn=resampling_fn,
             ess_threshold=ess_threshold,
+            differentiable_resampling=differentiable_resampling,
         ),
         associative=False,
     )
@@ -171,6 +176,7 @@ def filter_combine(
     log_potential: LogPotential,
     resampling_fn: Resampling,
     ess_threshold: float,
+    differentiable_resampling: bool,
 ) -> ParticleFilterState:
     """Combine previous filter state with the state prepared for the current step.
 
@@ -185,6 +191,8 @@ def filter_combine(
         resampling_fn: Resampling algorithm to use (e.g., systematic, multinomial).
         ess_threshold: Fraction of particle count specifying when to resample.
             Resampling is triggered when the effective sample size (ESS) < ess_threshold * N.
+        differentiable_resampling: If True, uses the stop-gradient resampling surrogate
+            of Ścibior & Wood (2021) for gradient computation.
 
     Returns:
         The filtered state at the current time step.
@@ -192,11 +200,34 @@ def filter_combine(
     N = state_1.log_weights.shape[0]
     keys = random.split(state_1.key, N + 1)
 
-    # Resample
+    log_weights_bar_prev = state_1.log_weights - jax.nn.logsumexp(state_1.log_weights)
+
+    def _resample_standard():
+        ancestor_idx = resampling_fn(keys[0], state_1.log_weights, N)
+        return ancestor_idx, jnp.zeros(N)
+
+    def _resample_differentiable():
+        ancestor_idx = resampling_fn(
+            keys[0], jax.lax.stop_gradient(log_weights_bar_prev), N
+        )
+        selected = log_weights_bar_prev[ancestor_idx]
+        log_w = -jnp.log(N) + selected - jax.lax.stop_gradient(selected)
+        return ancestor_idx, log_w
+
+    def _no_resample():
+        return jnp.arange(N), state_1.log_weights - jax.nn.logsumexp(
+            state_1.log_weights
+        )
+
+    if differentiable_resampling:
+        _resample_fn = _resample_differentiable
+    else:
+        _resample_fn = _resample_standard
+
     ancestor_indices, log_weights = jax.lax.cond(
         log_ess(state_1.log_weights) < jnp.log(ess_threshold * N),
-        lambda: (resampling_fn(keys[0], state_1.log_weights, N), jnp.zeros(N)),
-        lambda: (jnp.arange(N), state_1.log_weights),
+        _resample_fn,
+        _no_resample,
     )
     ancestors = tree.map(lambda x: x[ancestor_indices], state_1.particles)
 

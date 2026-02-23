@@ -86,7 +86,12 @@ class TestResamplings(chex.TestCase):
         method = get_resampling(test_case["method"])
 
         for M, N in MNs:
-            resampling = self.variant(lambda k_, lw_: method(k_, lw_, M))
+            # create dummy positions in the wrapper; accept the positions arg from tester and ignore it
+            resampling = self.variant(
+                lambda k_, lw_, positions: method(
+                    k_, lw_, jax.random.normal(jax.random.key(0), (N,)), M
+                )
+            )
             log_weights = jax.random.uniform(key_weights, (N,))
             resampling_tester(key_test, log_weights, resampling, M, self.K)
 
@@ -102,8 +107,14 @@ class TestResamplings(chex.TestCase):
         conditional_method = get_conditional_resampling(test_case["method"])
         for M in Ms:
             conditional_resampling = self.variant(
-                lambda k_, lw_, pivot_in, pivot_out: conditional_method(
-                    k_, lw_, M, pivot_in, pivot_out
+                # accept positions arg from tester and ignore it
+                lambda k_, lw_, positions, pivot_in, pivot_out: conditional_method(
+                    k_,
+                    lw_,
+                    jax.random.normal(jax.random.key(0), (M,)),
+                    M,
+                    pivot_in,
+                    pivot_out,
                 )
             )
 

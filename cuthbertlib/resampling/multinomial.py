@@ -1,6 +1,7 @@
 """Implements multinomial resampling."""
 
 from functools import partial
+from typing import Tuple
 
 import jax
 from jax import numpy as jnp
@@ -10,8 +11,14 @@ from cuthbertlib.resampling.protocols import (
     conditional_resampling_decorator,
     resampling_decorator,
 )
-from cuthbertlib.resampling.utils import inverse_cdf
-from cuthbertlib.types import Array, ArrayLike, ScalarArrayLike
+from cuthbertlib.resampling.utils import apply_resampling_indices, inverse_cdf
+from cuthbertlib.types import (
+    Array,
+    ArrayLike,
+    ArrayTree,
+    ArrayTreeLike,
+    ScalarArrayLike,
+)
 
 _DESCRIPTION = """
 This has higher variance than other resampling schemes as it samples from
@@ -21,7 +28,9 @@ As a rule of thumb, you often don't."""
 
 
 @partial(resampling_decorator, name="Multinomial", desc=_DESCRIPTION)
-def resampling(key: Array, logits: ArrayLike, n: int) -> Array:
+def resampling(
+    key: Array, logits: ArrayLike, positions: ArrayTreeLike, n: int
+) -> Tuple[Array, Array, ArrayTree]:
     # In practice we don't have to sort the generated uniforms, but searchsorted
     # works faster and is more stable if both inputs are sorted, so we use the
     # _sorted_uniforms from N. Chopin, but still use searchsorted instead of his
@@ -32,23 +41,26 @@ def resampling(key: Array, logits: ArrayLike, n: int) -> Array:
     key_uniforms, key_shuffle = random.split(key)
     sorted_uniforms = _sorted_uniforms(key_uniforms, n)
     idx = inverse_cdf(sorted_uniforms, logits)
-    return random.permutation(key_shuffle, idx)
+    idx = random.permutation(key_shuffle, idx)
+    logits_out = jnp.zeros_like(sorted_uniforms)
+    return idx, logits_out, apply_resampling_indices(positions, idx)
 
 
 @partial(conditional_resampling_decorator, name="Multinomial", desc=_DESCRIPTION)
 def conditional_resampling(
     key: Array,
     logits: ArrayLike,
+    positions: ArrayTreeLike,
     n: int,
     pivot_in: ScalarArrayLike,
     pivot_out: ScalarArrayLike,
-) -> Array:
+) -> Tuple[Array, Array, ArrayTree]:
     pivot_in = jnp.asarray(pivot_in)
     pivot_out = jnp.asarray(pivot_out)
 
-    idx = resampling(key, logits, n)
+    idx, logits_out, _ = resampling(key, logits, positions, n)
     idx = idx.at[pivot_in].set(pivot_out)
-    return idx
+    return idx, logits_out, apply_resampling_indices(positions, idx)
 
 
 @partial(jax.jit, static_argnames=("n",))

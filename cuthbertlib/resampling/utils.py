@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numba as nb
 import numpy as np
-from jax.lax import platform_dependent
+from jax.lax import platform_dependent, stop_gradient
 from jax.scipy.special import logsumexp
 from jax.tree_util import tree_map
 
@@ -64,7 +64,7 @@ def _inverse_cdf_cpu(sorted_uniforms: ArrayLike, weights: ArrayLike) -> Array:
         return idx_
 
     idx = jax.pure_callback(
-        callback, idx, (sorted_uniforms, weights, idx), vmap_method="sequential"
+        callback, idx, (stop_gradient(sorted_uniforms), stop_gradient(weights), stop_gradient(idx)), vmap_method="sequential"
     )
     return jnp.clip(idx, 0, M - 1)
 

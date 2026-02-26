@@ -1,3 +1,4 @@
-from cuthbertlib.resampling import killing, multinomial, systematic
+from cuthbertlib.resampling import adaptive, killing, multinomial, systematic
+from cuthbertlib.resampling.adaptive import ess_decorator
 from cuthbertlib.resampling.protocols import ConditionalResampling, Resampling
 from cuthbertlib.resampling.utils import inverse_cdf

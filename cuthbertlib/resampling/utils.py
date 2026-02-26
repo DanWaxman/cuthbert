@@ -6,8 +6,9 @@ import numba as nb
 import numpy as np
 from jax.lax import platform_dependent
 from jax.scipy.special import logsumexp
+from jax.tree_util import tree_map
 
-from cuthbertlib.types import Array, ArrayLike
+from cuthbertlib.types import Array, ArrayLike, ArrayTree, ArrayTreeLike
 
 
 @jax.jit
@@ -80,3 +81,8 @@ def _inverse_cdf_numba(su, ws, idx):
             j += 1
             s += ws[j]
         idx[n] = j
+
+
+def apply_resampling_indices(positions: ArrayTreeLike, idx: Array) -> ArrayTree:
+    """Apply resampling indices to positions."""
+    return tree_map(lambda x: x[idx], positions)

@@ -65,6 +65,7 @@ def build_filter(
     get_init_params: GetInitParams,
     get_dynamics_params: GetDynamicsParams,
     get_observation_params: GetObservationParams,
+    consume_first_observation: bool = False,
 ) -> Filter:
     """Builds an exact Kalman filter object for linear Gaussian SSMs.
 
@@ -77,6 +78,7 @@ def build_filter(
         get_observation_params: Function to get observation parameters, H, d, chol_R, y
             given model inputs sufficient to define
             p(y_t | x_t) = N(H @ x_t + d, chol_R @ chol_R^T).
+        consume_first_observation: Whether to consume the first observation.
 
     Returns:
         Filter object for exact Kalman filter. Suitable for associative scan.
@@ -85,6 +87,9 @@ def build_filter(
         init_prepare=partial(
             init_prepare,
             get_init_params=get_init_params,
+            get_observation_params=get_observation_params
+            if consume_first_observation
+            else None,
         ),
         filter_prepare=partial(
             filter_prepare,
@@ -134,6 +139,7 @@ def build_smoother(
 def init_prepare(
     model_inputs: ArrayTreeLike,
     get_init_params: GetInitParams,
+    get_observation_params: None | GetObservationParams = None,
     key: KeyArray | None = None,
 ) -> KalmanFilterState:
     """Prepare the initial state for the Kalman filter.
@@ -141,6 +147,7 @@ def init_prepare(
     Args:
         model_inputs: Model inputs.
         get_init_params: Function to get m0, chol_P0 from model inputs.
+        get_observation_params: If None, do not consume the first observation.
         key: JAX random key - not used.
 
     Returns:
@@ -149,14 +156,30 @@ def init_prepare(
     """
     model_inputs = tree.map(lambda x: jnp.asarray(x), model_inputs)
     m0, chol_P0 = get_init_params(model_inputs)
-    elem = filtering.FilterScanElement(
-        A=jnp.zeros_like(chol_P0),
-        b=m0,
-        U=chol_P0,
-        eta=jnp.zeros_like(m0),
-        Z=jnp.zeros_like(chol_P0),
-        ell=jnp.array(0.0),
-    )
+    if get_observation_params is None:
+        elem = filtering.FilterScanElement(
+            A=jnp.zeros_like(chol_P0),
+            b=m0,
+            U=chol_P0,
+            eta=jnp.zeros_like(m0),
+            Z=jnp.zeros_like(chol_P0),
+            ell=jnp.array(0.0),
+        )
+    else:
+        H, d, chol_R, y = get_observation_params(model_inputs)
+        (m, chol_P), ell = filtering.update(m0, chol_P0, H, d, chol_R, y)
+        return KalmanFilterState(
+            elem=filtering.FilterScanElement(
+                A=jnp.zeros_like(chol_P),
+                b=m,
+                U=chol_P,
+                eta=jnp.zeros_like(m),
+                Z=jnp.zeros_like(chol_P),
+                ell=ell,
+            ),
+            model_inputs=model_inputs,
+        )
+
     return KalmanFilterState(elem=elem, model_inputs=model_inputs)
 
 

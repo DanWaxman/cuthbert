@@ -45,6 +45,7 @@ def build_filter(
     associative: bool = False,
     rtol: float | None = None,
     ignore_nan_dims: bool = False,
+    consume_first_observation: bool = False,
 ) -> Filter:
     """Build linearized Taylor Kalman inference filter.
 
@@ -81,6 +82,7 @@ def build_filter(
         ignore_nan_dims: Whether to treat dimensions with NaN on the diagonal of the
             precision matrices (found via linearization) as missing and ignore all rows
             and columns associated with them.
+        consume_first_observation: Whether to consume the first observation.
 
     Returns:
         Linearized Taylor Kalman filter object.
@@ -111,6 +113,9 @@ def build_filter(
                 get_init_log_density=get_init_log_density,
                 rtol=rtol,
                 ignore_nan_dims=ignore_nan_dims,
+                get_observation_func=get_observation_func
+                if consume_first_observation
+                else None,
             ),
             filter_prepare=partial(
                 non_associative_filter.filter_prepare,

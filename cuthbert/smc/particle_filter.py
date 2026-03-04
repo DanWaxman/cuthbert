@@ -39,6 +39,7 @@ def build_filter(
     log_potential: LogPotential,
     n_filter_particles: int,
     resampling_fn: Resampling,
+    consume_first_observation: bool = False,
 ) -> Filter:
     r"""Builds a particle filter object.
 
@@ -51,6 +52,7 @@ def build_filter(
             The resampling function may be decorated with adaptive behaviour
             (using cuthbertlib.resampling.adaptive.adaptive_resampling_decorator)
             before being passed to the filter.
+        consume_first_observation: Whether to consume the first observation.
 
     Returns:
         Filter object for the particle filter.
@@ -60,6 +62,7 @@ def build_filter(
             init_prepare,
             init_sample=init_sample,
             n_filter_particles=n_filter_particles,
+            log_potential=log_potential if consume_first_observation else None,
         ),
         filter_prepare=partial(
             filter_prepare,
@@ -80,6 +83,7 @@ def init_prepare(
     model_inputs: ArrayTreeLike,
     init_sample: InitSample,
     n_filter_particles: int,
+    log_potential: None | LogPotential = None,
     key: KeyArray | None = None,
 ) -> ParticleFilterState:
     """Prepare the initial state for the particle filter.
@@ -88,6 +92,7 @@ def init_prepare(
         model_inputs: Model inputs.
         init_sample: Function to sample from the initial distribution M_0(x_0).
         n_filter_particles: Number of particles to sample.
+        log_potential: If None, do not consume the first observation.
         key: JAX random key.
 
     Returns:
@@ -105,7 +110,12 @@ def init_prepare(
     particles = jax.vmap(init_sample, (0, None))(keys, model_inputs)
 
     # Weight
-    log_weights = jnp.zeros(n_filter_particles)
+    if log_potential is None:
+        log_weights = jnp.zeros(n_filter_particles)
+    else:
+        log_weights = jax.vmap(log_potential, (None, 0, None))(
+            None, particles, model_inputs
+        )
 
     # Compute the log normalizing constant
     log_normalizing_constant = jax.nn.logsumexp(log_weights) - jnp.log(

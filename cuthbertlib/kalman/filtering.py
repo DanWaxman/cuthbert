@@ -173,6 +173,10 @@ def associative_params_single(
     return FilterScanElement(A, b, U, eta, Z, ell)
 
 
+def _add_jitter(A: Array, jitter: float = 1e-8) -> Array:
+    return A + jnp.eye(A.shape[-2], A.shape[-1]) * jitter
+
+
 def filtering_operator(
     elem_i: FilterScanElement, elem_j: FilterScanElement
 ) -> FilterScanElement:
@@ -191,7 +195,7 @@ def filtering_operator(
     nx = Z2.shape[0]
 
     Xi = jnp.block([[U1.T @ Z2, jnp.eye(nx)], [Z2, jnp.zeros_like(A1)]])
-    tria_xi = tria(Xi)
+    tria_xi = tria(_add_jitter(Xi))
     Xi11 = tria_xi[:nx, :nx]
     Xi21 = tria_xi[nx : nx + nx, :nx]
     Xi22 = tria_xi[nx : nx + nx, nx:]
@@ -202,9 +206,11 @@ def filtering_operator(
 
     A = A2 @ D_inv @ A1
     b = A2 @ tmp_2 + b2
-    U = tria(jnp.concatenate([A2 @ tmp_1, U2], axis=1))
+    _int = jnp.concatenate([A2 @ tmp_1, U2], axis=1)
+    U = tria(_add_jitter(_int))
     eta = A1.T @ (D_inv.T @ (eta2 - Z2 @ (Z2.T @ b1))) + eta1
-    Z = tria(jnp.concatenate([A1.T @ Xi22, Z1], axis=1))
+    _int = jnp.concatenate([A1.T @ Xi22, Z1], axis=1)
+    Z = tria(_add_jitter(_int))
 
     mu = cho_solve((U1, True), b1)
     t1 = b1 @ mu - (eta2 + mu) @ tmp_2

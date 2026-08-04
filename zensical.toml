@@ -23,9 +23,10 @@ nav = [
     "api_cuthbert/filtering.md",
     "api_cuthbert/smoothing.md",
     { "Discrete HMMs" = "api_cuthbert/discrete.md" },
-    { "Ensemble Kalman Filter" = [
+    { "Ensemble Kalman Filtering and Smoothing" = [
       "api_cuthbert/enkf.md",
       "api_cuthbert/enkf/ensemble_kalman_filter.md",
+      "api_cuthbert/enkf/ensemble_rts_smoother.md",
       "api_cuthbert/enkf/types.md",
     ] },
     { "Factorial state-space models" = [
@@ -53,9 +54,10 @@ nav = [
   { "cuthbertlib API" = [
     "api_cuthbertlib/index.md",
     "api_cuthbertlib/discrete.md",
-    { "Ensemble Kalman Filter" = [
+    { "Ensemble Kalman filtering and smoothing" = [
       "api_cuthbertlib/enkf.md",
       "api_cuthbertlib/enkf/filtering.md",
+      "api_cuthbertlib/enkf/smoothing.md",
     ] },
     "api_cuthbertlib/kalman.md",
     "api_cuthbertlib/linalg.md",

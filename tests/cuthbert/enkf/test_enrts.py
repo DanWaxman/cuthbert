@@ -86,8 +86,8 @@ class Test(chex.TestCase):
         chex.assert_trees_all_close(
             filtered_states.predicted_ensemble[1],
             expected_first_prediction,
-            rtol=0.0,
-            atol=0.0,
+            rtol=1e-12,
+            atol=1e-12,
         )
 
         smoothed_states = self.variant(

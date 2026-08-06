@@ -6,8 +6,8 @@ from absl.testing import parameterized
 from jax import random
 
 from cuthbert import filter, smoother
-from cuthbert.enkf import ensemble_kalman_filter, ensemble_rts_smoother
-from cuthbertlib import enkf as enkf_lib
+from cuthbert.ensemble_kalman import ensemble_kalman_filter, ensemble_rts_smoother
+from cuthbertlib import ensemble_kalman as enkf_lib
 from cuthbertlib.kalman.generate import generate_lgssm
 from tests.cuthbert.gaussian.test_kalman import std_kalman_filter
 from tests.cuthbertlib.kalman.test_smoothing import std_kalman_smoother

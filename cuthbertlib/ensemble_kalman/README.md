@@ -1,14 +1,14 @@
-# Ensemble Kalman Filtering and Smoothing
+# Ensemble Kalman
 
 This sub-repository provides modular functions for ensemble Kalman methods, including the ensemble Kalman filter (EnKF) and ensemble RTS smoother (EnRTS smoother).
 
 The core functions are:
 
 - `predict`: Propagate ensemble members through nonlinear dynamics with additive Gaussian noise.
-- `update`: Update ensemble members with an observation using the EnKF update equation.
+- `filter_update`: Update ensemble members with an observation using the EnKF update equation.
 - `smoother_update`: Apply one Ensemble Rauch-Tung-Striebel smoother update.
 
-Together, `predict` and `update` can be used to perform an online EnKF filtering step.
+Together, `predict` and `filter_update` can be used to perform an online EnKF filtering step.
 
 The EnKF uses an ensemble of particles with a Kalman-style measurement update based on empirical covariances. Unlike the EKF, it does not require Jacobians, while naturally handling nonlinear dynamics.
 

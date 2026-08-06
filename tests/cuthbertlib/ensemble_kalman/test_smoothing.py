@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from cuthbertlib.enkf.smoothing import update
+from cuthbertlib.ensemble_kalman.smoothing import update
 
 
 @pytest.fixture(scope="module", autouse=True)

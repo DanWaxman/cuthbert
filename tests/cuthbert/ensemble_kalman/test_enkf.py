@@ -6,7 +6,7 @@ from absl.testing import parameterized
 from jax import random
 
 from cuthbert import filter
-from cuthbert.enkf import ensemble_kalman_filter
+from cuthbert.ensemble_kalman import ensemble_kalman_filter
 from cuthbertlib.kalman.generate import generate_lgssm
 from tests.cuthbert.gaussian.test_kalman import std_kalman_filter
 

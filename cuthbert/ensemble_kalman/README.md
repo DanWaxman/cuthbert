@@ -1,10 +1,10 @@
-# Ensemble Kalman Filter and Smoother
+# Ensemble Kalman
 
-The core atomic functions are in [`cuthbertlib.enkf.filtering`](../../cuthbertlib/enkf/filtering.py)
-and [`cuthbertlib.enkf.smoothing`](../../cuthbertlib/enkf/smoothing.py). The
+The core atomic functions are in [`cuthbertlib.ensemble_kalman.filtering`](../../cuthbertlib/ensemble_kalman/filtering.py)
+and [`cuthbertlib.ensemble_kalman.smoothing`](../../cuthbertlib/ensemble_kalman/smoothing.py). The
 high-level interfaces are in
-[`cuthbert.enkf.ensemble_kalman_filter`](ensemble_kalman_filter.py) and
-[`cuthbert.enkf.ensemble_rts_smoother`](ensemble_rts_smoother.py).
+[`cuthbert.ensemble_kalman.ensemble_kalman_filter`](ensemble_kalman_filter.py) and
+[`cuthbert.ensemble_kalman.ensemble_rts_smoother`](ensemble_rts_smoother.py).
 
 ## Ensemble Kalman filter
 

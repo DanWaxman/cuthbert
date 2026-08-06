@@ -6,10 +6,10 @@ import jax
 import jax.numpy as jnp
 from jax import tree
 
-from cuthbert.enkf.ensemble_kalman_filter import EnKFState
+from cuthbert.ensemble_kalman.ensemble_kalman_filter import EnKFState
 from cuthbert.inference import Smoother
 from cuthbert.utils import dummy_tree_like
-from cuthbertlib import enkf as enkf_lib
+from cuthbertlib import ensemble_kalman as enkf_lib
 from cuthbertlib.linalg import tria
 from cuthbertlib.types import Array, ArrayTree, ArrayTreeLike, KeyArray
 

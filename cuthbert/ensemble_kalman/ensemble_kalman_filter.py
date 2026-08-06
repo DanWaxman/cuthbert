@@ -11,14 +11,14 @@ import jax
 import jax.numpy as jnp
 from jax import random, tree
 
-from cuthbert.enkf.types import (
+from cuthbert.ensemble_kalman.types import (
     GetEnKFDynamics,
     GetEnKFObservations,
     InitSample,
 )
 from cuthbert.inference import Filter
 from cuthbert.utils import dummy_tree_like
-from cuthbertlib import enkf as enkf_lib
+from cuthbertlib import ensemble_kalman as enkf_lib
 from cuthbertlib.linalg import tria
 from cuthbertlib.types import Array, ArrayTree, ArrayTreeLike, KeyArray, ScalarArray
 
@@ -232,7 +232,7 @@ def filter_combine(
 
     # Update
     observation_fn, chol_R, y = get_observations(state_2.model_inputs)
-    updated, ll = enkf_lib.update(
+    updated, ll = enkf_lib.filter_update(
         key_update,
         predicted,
         observation_fn,

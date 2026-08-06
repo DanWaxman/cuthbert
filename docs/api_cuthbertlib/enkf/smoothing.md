@@ -1,3 +1,0 @@
-# `smoothing`
-
-::: cuthbertlib.enkf.smoothing

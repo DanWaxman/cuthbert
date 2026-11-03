@@ -27,6 +27,7 @@ nav = [
     { "Ensemble Kalman" = [
       "api_cuthbert/ensemble_kalman/index.md",
       "api_cuthbert/ensemble_kalman/ensemble_kalman_filter.md",
+      "api_cuthbert/ensemble_kalman/local_ensemble_transform_kalman_filter.md",
       "api_cuthbert/ensemble_kalman/ensemble_rts_smoother.md",
       "api_cuthbert/ensemble_kalman/types.md",
     ] },
@@ -58,6 +59,7 @@ nav = [
     { "Ensemble Kalman" = [
       "api_cuthbertlib/ensemble_kalman/index.md",
       "api_cuthbertlib/ensemble_kalman/filtering.md",
+      "api_cuthbertlib/ensemble_kalman/letkf.md",
       "api_cuthbertlib/ensemble_kalman/smoothing.md",
       "api_cuthbertlib/ensemble_kalman/localization.md",
     ] },

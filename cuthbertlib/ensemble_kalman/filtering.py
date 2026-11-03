@@ -165,6 +165,36 @@ def _quadratic_form_residual(A: Array, z: Array) -> ScalarArray:
     return residual @ residual
 
 
+def _ensemble_log_likelihood(
+    whitened_anomalies: Array,
+    whitened_mean_innovation: Array,
+    chol_R: Array,
+    chol_C: Array,
+) -> ScalarArray:
+    """Score a Gaussian forecast using observation and ensemble-space factors.
+
+    Args:
+        whitened_anomalies: Normalized observation anomalies whitened by the
+            observation-noise factor, shape (y_dim, N).
+        whitened_mean_innovation: Whitened observation minus forecast mean,
+            shape (y_dim,).
+        chol_R: Observation-noise factor, diagonal or lower triangular. Missing
+            dimensions must have zero anomalies and innovation and diagonal
+            noise factor ``1 / sqrt(2 * pi)`` to cancel their normalization.
+        chol_C: Generalized Cholesky factor of
+            ``I + whitened_anomalies.T @ whitened_anomalies``.
+
+    Returns:
+        Global Gaussian predictive log density.
+    """
+    quadratic_form = _quadratic_form_residual(
+        whitened_anomalies, whitened_mean_innovation
+    )
+    log_det = _log_det_from_chol(chol_R) + _log_det_from_chol(chol_C)
+    y_dim = whitened_anomalies.shape[0]
+    return jnp.asarray(-0.5 * (y_dim * jnp.log(2 * jnp.pi) + log_det + quadratic_form))
+
+
 def predict(
     key: KeyArray,
     ensemble: Array,
@@ -453,11 +483,8 @@ def _update_ensemble_subspace(
     # The log-likelihood uses the unperturbed innovation about the ensemble mean, which
     # is a different object from the per-member innovations driving the update above.
     whitened_mean_innovation = _whiten(chol_R, y - y_mean)
-    quadratic_form = _quadratic_form_residual(
-        whitened_anomalies, whitened_mean_innovation
+    ll = _ensemble_log_likelihood(
+        whitened_anomalies, whitened_mean_innovation, chol_R, chol_C
     )
 
-    log_det = _log_det_from_chol(chol_R) + _log_det_from_chol(chol_C)
-    ll = -0.5 * (y_dim * jnp.log(2 * jnp.pi) + log_det + quadratic_form)
-
-    return updated, jnp.asarray(ll)
+    return updated, ll

@@ -73,6 +73,25 @@ class ModifyCrossCovariance(Protocol):
         ...
 
 
+class GetLETKFLocalization(Protocol):
+    """Protocol for getting padded LETKF observation neighborhoods."""
+
+    def __call__(self, model_inputs: ArrayTreeLike) -> tuple[Array, Array]:
+        """Get observation indices and precision weights for each state coordinate.
+
+        Args:
+            model_inputs: Current model inputs.
+
+        Returns:
+            Integer observation indices and finite, nonnegative weights, both
+            shaped (x_dim, max_local_observations). Indices refer to the original
+            observation order. Use -1 for padding; other indices must be in range
+            and unique within each row. Padding weights are ignored, and zero
+            weights exclude observations. Shapes must remain fixed under JIT.
+        """
+        ...
+
+
 class ConstructCholInnovationCovariance(Protocol):
     """Protocol for constructing an EnKF innovation covariance factor."""
 

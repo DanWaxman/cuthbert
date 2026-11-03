@@ -1,8 +1,8 @@
 # Ensemble Kalman
 
 The high-level interfaces built on these functions are in
-[`cuthbert.ensemble_kalman.ensemble_kalman_filter`](../../cuthbert/ensemble_kalman/ensemble_kalman_filter.py)
-and
+[`cuthbert.ensemble_kalman.ensemble_kalman_filter`](../../cuthbert/ensemble_kalman/ensemble_kalman_filter.py),
+[`cuthbert.ensemble_kalman.local_ensemble_transform_kalman_filter`](../../cuthbert/ensemble_kalman/local_ensemble_transform_kalman_filter.py), and
 [`cuthbert.ensemble_kalman.ensemble_rts_smoother`](../../cuthbert/ensemble_kalman/ensemble_rts_smoother.py).
 
 <!-- --8<-- [start:overview] -->
@@ -12,6 +12,7 @@ The core functions are:
 
 - `predict`: Propagate ensemble members through nonlinear dynamics with additive Gaussian noise.
 - `filter_update`: Update ensemble members with an observation using the EnKF update equation.
+- `letkf_update`: Apply local ensemble transforms and compute a global Gaussian predictive log density.
 - `smoother_update`: Apply one Ensemble Rauch-Tung-Striebel smoother update.
 - `construct_tapered_chol_innovation_covariance`: Construct a tapered innovation covariance factor without forming the covariance densely.
 - `gaspari_cohn`: Construct covariance tapers with the Gaspari-Cohn correlation function.
@@ -36,6 +37,52 @@ When $R^{-1}$ is applied by a dense Cholesky factor, this incurs a cost of $\mat
 Both localization hooks below are rejected with `ensemble_subspace=True`, as the Woodbury identity is inapplicable with tapering.
 
 <!-- --8<-- [end:filtering] -->
+
+## Local ensemble transform filtering
+
+<!-- --8<-- [start:letkf] -->
+`letkf_update` performs the deterministic Local Ensemble Transform Kalman Filter
+(LETKF) analysis of [Hunt et al. (2007)](https://doi.org/10.1016/j.physd.2006.11.008).
+It accepts a forecast ensemble, observation function, scalar or 1D diagonal
+observation-noise factor `chol_R`, observations, and padded local observation
+indices and weights. It returns the updated ensemble and one global Gaussian
+predictive log density. The analysis needs no random key; use `predict` for
+forecast sampling and inflation.
+
+Indices and weights have shape `(x_dim, max_local_observations)`, with one row
+per state coordinate. Indices use the original observation order, with `-1` for
+padding; other indices must be in range and unique within each row. Weights
+must be finite and nonnegative. Padding weights are ignored, and zero weights
+exclude observations. Shapes are checked statically; callers must ensure these
+value constraints. NaNs in observations are masked. An empty or entirely masked
+neighborhood leaves its state coordinate unchanged.
+
+For normalized local observation anomalies $Y_\ell$, innovation $d_\ell$, and
+precision $D_\ell=\operatorname{diag}(\rho_{\ell j}/\sigma_j^2)$, the analysis forms
+
+$$
+C_\ell=I_N+Y_\ell^\top D_\ell Y_\ell.
+$$
+
+Normalized state anomalies $X_\ell$ give the mean increment
+$X_\ell C_\ell^{-1}Y_\ell^\top D_\ell d_\ell$; unnormalized state anomalies are
+transformed by the symmetric $C_\ell^{-1/2}$. Its custom derivative remains
+finite at repeated eigenvalues, including the identity transform.
+
+Local analyses are mapped over coordinates with bounded intermediate storage.
+For at most $m$ observations per coordinate, their cost is
+$\mathcal O(x_{\rm dim}(mN^2+N^3))$. The full observation function is evaluated
+once per ensemble member. Global scoring costs
+$\mathcal O(y_{\rm dim}N^2+N^3)$ using ensemble-space factors, without forming a
+dense observation covariance or state-observation cross-covariance.
+
+The score is $\log\mathcal N(y;\bar h,R+YY^\top)$ for the full normalized
+observation anomaly matrix $Y$, excluding missing dimensions. It uses the
+original observation noise and is independent of the current localization
+weights. This normalized global Gaussian approximation is not an unbiased model
+likelihood estimate. Local densities are never summed, and an entirely missing
+observation returns the forecast ensemble and zero log density.
+<!-- --8<-- [end:letkf] -->
 
 ## Ensemble Rauch-Tung-Striebel smoothing
 

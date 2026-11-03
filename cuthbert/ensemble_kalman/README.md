@@ -54,6 +54,10 @@ The returned filter uses `EnKFState`, explicit initialization and random keys,
 and sequential `cuthbert.filter(..., parallel=False)` execution. Forecast
 deviations are multiplied by `1 + inflation`. As with the EnKF,
 `store_predicted_ensemble=True` retains the incoming forecast in each state.
+Set `batch_size` on the builder to analyze that many state coordinates in
+parallel within each `jax.lax.map` batch. The default `None` processes one
+coordinate at a time; larger batches use more memory. A final partial batch is
+handled automatically.
 
 **Likelihood.** `log_normalizing_constant` accumulates the global Gaussian
 predictive log density of the full forecast observation ensemble, evaluated

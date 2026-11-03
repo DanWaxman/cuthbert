@@ -18,7 +18,9 @@ def config():
     jax.config.update("jax_enable_x64", False)
 
 
-def load_letkf_inference(store_predicted_ensemble=False, log_length_scale=None):
+def load_letkf_inference(
+    store_predicted_ensemble=False, log_length_scale=None, batch_size=None
+):
     F = jnp.array([[0.9, 0.1, 0.0], [0.0, 0.8, 0.1], [0.1, 0.0, 0.85]])
     c = jnp.array([0.05, -0.02, 0.03])
     H = jnp.array([[1.0, 0.0, 0.2], [0.0, 0.4, 1.0]])
@@ -41,15 +43,18 @@ def load_letkf_inference(store_predicted_ensemble=False, log_length_scale=None):
         get_localization=lambda _: (indices, weights),
         inflation=0.05,
         store_predicted_ensemble=store_predicted_ensemble,
+        batch_size=batch_size,
     )
     return inference, ys, F, c, H, chol_R
 
 
 class Test(chex.TestCase):
     @chex.variants(with_jit=True, without_jit=True)
-    @parameterized.parameters(False, True)
-    def test_filter(self, store_predicted_ensemble):
-        inference, ys, F, c, H, chol_R = load_letkf_inference(store_predicted_ensemble)
+    @parameterized.product(store_predicted_ensemble=[False, True], batch_size=[None, 2])
+    def test_filter(self, store_predicted_ensemble, batch_size):
+        inference, ys, F, c, H, chol_R = load_letkf_inference(
+            store_predicted_ensemble, batch_size=batch_size
+        )
         init_key, filter_key = random.split(random.key(2))
         initial = inference.init_prepare(key=init_key)
         assert not inference.associative
@@ -92,12 +97,15 @@ class Test(chex.TestCase):
             assert states.predicted_ensemble is None
 
 
-def test_localized_log_likelihood_gradient():
+@pytest.mark.parametrize("batch_size", [None, 2])
+def test_localized_log_likelihood_gradient(batch_size):
     init_key, filter_key = random.split(random.key(3))
 
     @jax.jit
     def log_likelihood(log_length_scale):
-        inference, ys, *_ = load_letkf_inference(log_length_scale=log_length_scale)
+        inference, ys, *_ = load_letkf_inference(
+            log_length_scale=log_length_scale, batch_size=batch_size
+        )
         initial = inference.init_prepare(key=init_key)
         return filter(inference, ys, initial, key=filter_key).log_normalizing_constant[
             -1

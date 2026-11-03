@@ -70,6 +70,10 @@ transformed by the symmetric $C_\ell^{-1/2}$. Its custom derivative remains
 finite at repeated eigenvalues, including the identity transform.
 
 Local analyses are mapped over coordinates with bounded intermediate storage.
+The optional `batch_size` argument controls how many coordinates `jax.lax.map`
+analyzes concurrently. It defaults to `None` (one coordinate at a time), must
+be static under JIT, and trades increased memory use for parallelism. A final
+partial batch is handled automatically.
 For at most $m$ observations per coordinate, their cost is
 $\mathcal O(x_{\rm dim}(mN^2+N^3))$. The full observation function is evaluated
 once per ensemble member. Global scoring costs

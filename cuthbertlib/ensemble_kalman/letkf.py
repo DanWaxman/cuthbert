@@ -46,6 +46,7 @@ def update(
     y: Array,
     observation_indices: Array,
     localization_weights: Array,
+    batch_size: int | None = None,
 ) -> tuple[Array, ScalarArray]:
     r"""Apply local deterministic transforms and score the global forecast.
 
@@ -75,6 +76,9 @@ def update(
             same shape as ``observation_indices``. Weights at padded indices
             are ignored. Neighborhood shapes must remain fixed under JIT;
             indices and weights may vary with model inputs.
+        batch_size: Number of state coordinates to analyze concurrently in
+            ``jax.lax.map``. ``None`` processes one coordinate at a time.
+            Larger batches trade memory for parallelism. Must be static under JIT.
 
     Returns:
         Updated ensemble of shape (N, x_dim) and the global predictive log density.
@@ -158,5 +162,6 @@ def update(
     updated = jax.lax.map(
         analyze_coordinate,
         (predicted_ensemble.T, observation_indices, localization_weights),
+        batch_size=batch_size,
     ).T
     return updated, ll

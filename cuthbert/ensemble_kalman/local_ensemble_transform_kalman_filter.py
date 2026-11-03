@@ -27,6 +27,7 @@ def build_filter(
     get_localization: GetLETKFLocalization,
     inflation: float = 0.0,
     store_predicted_ensemble: bool = False,
+    batch_size: int | None = None,
 ) -> Filter:
     """Build a LETKF with a global Gaussian predictive likelihood.
 
@@ -53,6 +54,9 @@ def build_filter(
             following the EnKF convention.
         store_predicted_ensemble: Whether to retain the incoming forecast ensemble
             in each state, following the EnKF convention.
+        batch_size: Number of state coordinates to analyze concurrently in
+            ``jax.lax.map``. ``None`` processes one coordinate at a time.
+            Larger batches trade memory for parallelism.
 
     Returns:
         Non-associative filter using ``EnKFState`` and the usual EnKF key handling.
@@ -81,6 +85,7 @@ def build_filter(
             get_dynamics=get_dynamics,
             get_observations=get_observations,
             get_localization=get_localization,
+            batch_size=batch_size,
             inflation=inflation,
             store_predicted_ensemble=store_predicted_ensemble,
         ),
@@ -96,6 +101,7 @@ def filter_combine(
     get_localization: GetLETKFLocalization,
     inflation: float = 0.0,
     store_predicted_ensemble: bool = False,
+    batch_size: int | None = None,
 ) -> EnKFState:
     """Propagate the previous ensemble and apply a local transform analysis.
 
@@ -108,6 +114,8 @@ def filter_combine(
         get_localization: Function getting local indices and precision weights.
         inflation: Multiplicative forecast anomaly inflation, as in EnKF.
         store_predicted_ensemble: Whether to retain the incoming forecast ensemble.
+        batch_size: Number of state coordinates to analyze concurrently, or
+            ``None`` to process one at a time.
 
     Returns:
         Updated ensemble state with cumulative global predictive log likelihood.
@@ -128,6 +136,7 @@ def filter_combine(
         y,
         observation_indices,
         localization_weights,
+        batch_size=batch_size,
     )
     return EnKFState(
         key=key_next,

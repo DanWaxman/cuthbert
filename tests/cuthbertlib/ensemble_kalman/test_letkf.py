@@ -17,7 +17,8 @@ def config():
 
 
 @pytest.mark.parametrize("diagonal", [False, True])
-def test_update_matches_kalman(diagonal):
+@pytest.mark.parametrize("batch_size", [None, 2, 4])
+def test_update_matches_kalman(diagonal, batch_size):
     ensemble = random.normal(random.key(0), (8, 3))
     H = jnp.array([[1.0, 0.2, 0.0], [0.0, 0.5, 1.0]])
     offset = jnp.array([0.1, -0.2])
@@ -25,8 +26,16 @@ def test_update_matches_kalman(diagonal):
     chol_R = jnp.array([0.4, 0.7]) if diagonal else jnp.array(0.4)
     indices = jnp.broadcast_to(jnp.arange(2), (3, 2))
 
-    updated, ll = jax.jit(letkf_update, static_argnames=("observation_fn",))(
-        ensemble, lambda x: H @ x + offset, chol_R, y, indices, jnp.ones((3, 2))
+    updated, ll = jax.jit(
+        letkf_update, static_argnames=("observation_fn", "batch_size")
+    )(
+        ensemble,
+        lambda x: H @ x + offset,
+        chol_R,
+        y,
+        indices,
+        jnp.ones((3, 2)),
+        batch_size=batch_size,
     )
     expected_mean, expected_cov, expected_ll = std_update(
         ensemble.mean(0),

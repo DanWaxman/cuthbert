@@ -122,3 +122,82 @@ def test_inverse_sqrt_gradient_at_repeated_eigenvalues(rank_one):
     chex.assert_trees_all_close(tangent, difference, rtol=1e-7, atol=1e-9)
     if not rank_one:
         chex.assert_trees_all_close(tangent, -0.5 * direction, atol=1e-12)
+
+
+@pytest.mark.parametrize("batch_size", [None, 2])
+def test_weight_interpolation(batch_size):
+    ensemble = random.normal(random.key(4), (8, 5))
+    H = jnp.array([[1.0, 0.2, 0.0, 0.0, 0.0], [0.0, 0.0, 0.3, 0.2, 1.0]])
+    chol_R, y = jnp.array([0.4, 0.7]), jnp.array([0.4, -0.6])
+    indices = jnp.array([[0, -1], [1, -1]])
+    weights = jnp.array([[1.0, 0.0], [0.6, 0.0]])
+    interpolation_indices = jnp.array([[0, -1], [0, 1], [0, 1], [0, 1], [1, -1]])
+    interpolation_weights = jnp.array(
+        [[1.0, 99.0], [0.75, 0.25], [0.5, 0.5], [0.25, 0.75], [1.0, 99.0]]
+    )
+
+    def update(y, indices, weights, interpolation=None):
+        return letkf_update(
+            ensemble,
+            lambda x: H @ x,
+            chol_R,
+            y,
+            indices,
+            weights,
+            batch_size=batch_size,
+            weight_interpolation=interpolation,
+        )
+
+    updated, ll = jax.jit(update)(
+        y, indices, weights, (interpolation_indices, interpolation_weights)
+    )
+    # Apply each coarse analysis to every coordinate's own forecast anomalies.
+    # Their linear combination is the reference for interpolated w and W.
+    left, left_ll = update(
+        y, jnp.broadcast_to(indices[0], (5, 2)), jnp.broadcast_to(weights[0], (5, 2))
+    )
+    right, right_ll = update(
+        y, jnp.broadcast_to(indices[1], (5, 2)), jnp.broadcast_to(weights[1], (5, 2))
+    )
+    fraction = jnp.linspace(0, 1, 5)
+    chex.assert_trees_all_close(
+        updated, (1 - fraction) * left + fraction * right, rtol=1e-12, atol=1e-12
+    )
+    chex.assert_trees_all_close((ll, ll), (left_ll, right_ll), rtol=1e-12, atol=1e-12)
+
+    partial_y = y.at[0].set(jnp.nan)
+    partial, partial_ll = jax.jit(update)(
+        partial_y, indices, weights, (interpolation_indices, interpolation_weights)
+    )
+    _, _, expected_ll = std_update(
+        ensemble.mean(0),
+        jnp.cov(ensemble.T),
+        H,
+        jnp.zeros(2),
+        jnp.diag(chol_R**2),
+        partial_y,
+    )
+    chex.assert_trees_all_close(
+        (partial, partial_ll),
+        ((1 - fraction) * ensemble + fraction * right, expected_ll),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+    # A one-hot interpolation stencil reproduces the ordinary fine-grid analysis.
+    fine_indices = jnp.broadcast_to(jnp.arange(2), (5, 2))
+    fine_weights = jnp.stack([1 - 0.8 * fraction, 0.2 + 0.8 * fraction], axis=1)
+    direct = update(y, fine_indices, fine_weights)
+    identity_interpolation = (jnp.arange(5)[:, None], jnp.ones((5, 1)))
+    interpolated = jax.jit(update)(
+        y, fine_indices, fine_weights, identity_interpolation
+    )
+    chex.assert_trees_all_close(interpolated, direct, rtol=1e-12, atol=1e-12)
+
+    missing, missing_ll = jax.jit(update)(
+        jnp.full_like(y, jnp.nan),
+        indices,
+        weights,
+        (interpolation_indices, interpolation_weights),
+    )
+    chex.assert_trees_all_equal((missing, missing_ll), (ensemble, jnp.array(0.0)))

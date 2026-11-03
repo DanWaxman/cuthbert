@@ -49,6 +49,8 @@ length `y_dim`; dense factors, including dense diagonal matrices, are not
 supported. Observation noise covariance is `chol_R ** 2` on the diagonal.
 NaNs in observations are excluded from both the analysis and the likelihood.
 Coordinates with no active observations preserve their forecast members.
+This applies to the default per-coordinate analysis; weight interpolation can
+carry analysis information from nearby coarse points into data-void regions.
 
 The returned filter uses `EnKFState`, explicit initialization and random keys,
 and sequential `cuthbert.filter(..., parallel=False)` execution. Forecast
@@ -59,12 +61,32 @@ parallel within each `jax.lax.map` batch. The default `None` processes one
 coordinate at a time; larger batches use more memory. A final partial batch is
 handled automatically.
 
+**Optional weight interpolation.** Supply `get_weight_interpolation(model_inputs)`
+to enable the method of [Yang et al. (2009)](https://doi.org/10.1002/qj.353).
+With this option, `get_localization` returns neighborhoods on a coarse analysis
+grid, shaped `(n_analysis, max_local_observations)`, rather than one neighborhood
+per state coordinate. The interpolation callback returns integer coarse-analysis
+indices and interpolation coefficients, both shaped `(x_dim, stencil_size)`.
+Indices refer to rows of `get_localization`; use `-1` for padding. Nonpadding
+indices must be in range, and finite nonnegative coefficients must sum to one
+over nonpadding entries in each row. Padding coefficients are ignored.
+Shapes stay fixed under JIT; these value constraints remain caller requirements.
+
+The caller supplies the interpolation geometry, for example two-point linear
+or four-point bilinear stencils. Both the mean-analysis weights and symmetric
+ensemble transforms are interpolated, then applied to each fine coordinate's
+own forecast anomalies. State fields and spatial analysis increments are not
+interpolated. Only the coarse points require ensemble-space factorizations;
+their transforms are retained while fine coordinates are updated in batches.
+`get_weight_interpolation=None` (the default) keeps the per-coordinate analysis.
+
 **Likelihood.** `log_normalizing_constant` accumulates the global Gaussian
 predictive log density of the full forecast observation ensemble, evaluated
 before each local analysis. The observation covariance is the sample forecast
 covariance plus the original observation-noise covariance. Each observation is
 scored once; neighborhood scores are never summed. Localization affects later
-forecasts, but does not directly change the current forecast's score. This is a
+forecasts, but neither localization nor weight interpolation directly changes
+the current forecast's score. This is a
 normalized predictive density approximation, not an unbiased estimate of the
 original model likelihood. An entirely missing observation contributes zero.
 <!-- --8<-- [end:letkf] -->

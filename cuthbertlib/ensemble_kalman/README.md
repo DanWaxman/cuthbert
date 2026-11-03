@@ -57,6 +57,20 @@ exclude observations. Shapes are checked statically; callers must ensure these
 value constraints. NaNs in observations are masked. An empty or entirely masked
 neighborhood leaves its state coordinate unchanged.
 
+Optional weight interpolation follows
+[Yang et al. (2009)](https://doi.org/10.1002/qj.353). Pass
+`weight_interpolation=(indices, coefficients)` to compute analysis weights on a
+coarse grid and interpolate them to the full state. Localization indices and
+weights then have shape `(n_analysis, max_local_observations)` and describe the
+coarse analysis points. Interpolation indices and coefficients both have shape
+`(x_dim, stencil_size)`. Indices refer to coarse analysis rows, with `-1` for
+padding; other indices must be in range. Coefficients must be finite,
+nonnegative, and sum to one over nonpadding entries in each row. Padding
+coefficients are ignored. These are caller value constraints, and shapes must
+remain fixed under JIT. The caller supplies linear, bilinear, or other convex
+interpolation stencils; no grid geometry is assumed. The default `None`
+disables interpolation.
+
 For normalized local observation anomalies $Y_\ell$, innovation $d_\ell$, and
 precision $D_\ell=\operatorname{diag}(\rho_{\ell j}/\sigma_j^2)$, the analysis forms
 
@@ -69,16 +83,27 @@ $X_\ell C_\ell^{-1}Y_\ell^\top D_\ell d_\ell$; unnormalized state anomalies are
 transformed by the symmetric $C_\ell^{-1/2}$. Its custom derivative remains
 finite at repeated eigenvalues, including the identity transform.
 
+When interpolation is enabled, both the coarse mean-weight vectors and
+symmetric transforms are interpolated before applying them to the fine
+coordinate's own anomalies. This preserves fine forecast structure and can
+carry analysis information into data-void regions. Interpolating the full
+analysis field or its spatial increments would be a different algorithm.
+
 Local analyses are mapped over coordinates with bounded intermediate storage.
 The optional `batch_size` argument controls how many coordinates `jax.lax.map`
 analyzes concurrently. It defaults to `None` (one coordinate at a time), must
 be static under JIT, and trades increased memory use for parallelism. A final
 partial batch is handled automatically.
+With interpolation, `batch_size` applies to both coarse solves and fine updates.
 For at most $m$ observations per coordinate, their cost is
 $\mathcal O(x_{\rm dim}(mN^2+N^3))$. The full observation function is evaluated
 once per ensemble member. Global scoring costs
 $\mathcal O(y_{\rm dim}N^2+N^3)$ using ensemble-space factors, without forming a
 dense observation covariance or state-observation cross-covariance.
+Interpolation reduces the number of factorizations from `x_dim` to `n_analysis`;
+it stores the coarse transforms in $\mathcal O(n_{\rm analysis}N^2)$ memory.
+Fine updates cost $\mathcal O(x_{\rm dim}sN^2)$ for stencil size $s$, without
+materializing a transform matrix for every fine coordinate at once.
 
 The score is $\log\mathcal N(y;\bar h,R+YY^\top)$ for the full normalized
 observation anomaly matrix $Y$, excluding missing dimensions. It uses the

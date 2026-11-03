@@ -2,6 +2,8 @@
 
 See Hunt, Kostelich, and Szunyogh (2007),
 https://doi.org/10.1016/j.physd.2006.11.008.
+Optional weight interpolation follows Yang et al. (2009),
+https://doi.org/10.1002/qj.353.
 """
 
 import jax
@@ -47,6 +49,7 @@ def update(
     observation_indices: Array,
     localization_weights: Array,
     batch_size: int | None = None,
+    weight_interpolation: tuple[Array, Array] | None = None,
 ) -> tuple[Array, ScalarArray]:
     r"""Apply local deterministic transforms and score the global forecast.
 
@@ -59,8 +62,10 @@ def update(
     Each state coordinate then uses a local ensemble-space transform, with
     observation precision weighted by ``localization_weights``. NaNs in ``y``
     indicate missing observations. Padding, zero weights, and missing entries
-    are excluded. A coordinate with no active observations is unchanged; if
-    every observation is missing, the log-likelihood contribution is zero.
+    are excluded. Without interpolation, a coordinate with no active
+    observations is unchanged. With interpolation, its analysis can inherit
+    information from neighboring coarse analysis points. If every observation
+    is missing, the ensemble is unchanged and the log-likelihood is zero.
 
     Args:
         predicted_ensemble: Forecast members, shape (N, x_dim), with N >= 2.
@@ -70,8 +75,10 @@ def update(
             nonzero. Two-dimensional factors are not supported.
         y: Nonempty observation vector, shape (y_dim,).
         observation_indices: Integer indices in the original observation order,
-            shape (x_dim, max_local_observations). Use -1 for padding; other
-            entries must be in range and unique within each row.
+            shape (n_analysis, max_local_observations). Without interpolation,
+            n_analysis must equal x_dim. With interpolation, rows describe the
+            coarse analysis points. Use -1 for padding; other entries must be
+            in range and unique within each row.
         localization_weights: Finite, nonnegative precision weights with the
             same shape as ``observation_indices``. Weights at padded indices
             are ignored. Neighborhood shapes must remain fixed under JIT;
@@ -79,6 +86,17 @@ def update(
         batch_size: Number of state coordinates to analyze concurrently in
             ``jax.lax.map``. ``None`` processes one coordinate at a time.
             Larger batches trade memory for parallelism. Must be static under JIT.
+            With interpolation, applies to both coarse solves and fine updates.
+        weight_interpolation: Optional pair of coarse-analysis indices and
+            interpolation coefficients, both shaped (x_dim, stencil_size).
+            Indices refer to rows of ``observation_indices``; -1 marks padding.
+            Nonpadding indices must be in range. Coefficients must be finite,
+            nonnegative, and sum to one over nonpadding entries in each row.
+            Padding coefficients are ignored. Both the mean-analysis weights
+            and symmetric transforms are interpolated and applied to each fine
+            coordinate's own forecast anomalies, following Yang et al. (2009).
+            ``None`` disables interpolation. Shapes must remain fixed under JIT;
+            index and coefficient value constraints are caller requirements.
 
     Returns:
         Updated ensemble of shape (N, x_dim) and the global predictive log density.
@@ -101,15 +119,33 @@ def update(
         raise ValueError("chol_R must be a scalar or a 1D factor of shape (y_dim,).")
     if (
         observation_indices.ndim != 2
-        or observation_indices.shape[0] != predicted_ensemble.shape[1]
         or localization_weights.shape != observation_indices.shape
     ):
         raise ValueError(
             "observation_indices and localization_weights must both have shape "
-            "(x_dim, max_local_observations)."
+            "(n_analysis, max_local_observations)."
         )
     if not jnp.issubdtype(observation_indices.dtype, jnp.integer):
         raise ValueError("observation_indices must contain integers.")
+    if weight_interpolation is None:
+        if observation_indices.shape[0] != predicted_ensemble.shape[1]:
+            raise ValueError("Without interpolation, n_analysis must equal x_dim.")
+    else:
+        interpolation_indices, interpolation_weights = (
+            jnp.asarray(value) for value in weight_interpolation
+        )
+        if (
+            observation_indices.shape[0] == 0
+            or interpolation_indices.ndim != 2
+            or interpolation_indices.shape[0] != predicted_ensemble.shape[1]
+            or interpolation_weights.shape != interpolation_indices.shape
+        ):
+            raise ValueError(
+                "weight_interpolation requires at least one analysis point and "
+                "indices and coefficients of shape (x_dim, stencil_size)."
+            )
+        if not jnp.issubdtype(interpolation_indices.dtype, jnp.integer):
+            raise ValueError("Interpolation indices must contain integers.")
 
     n_particles = predicted_ensemble.shape[0]
     scale = jnp.sqrt(jnp.asarray(n_particles - 1, dtype=predicted_ensemble.dtype))
@@ -138,8 +174,8 @@ def update(
     )
     ll = jnp.where(jnp.any(observed), ll, 0)
 
-    def analyze_coordinate(inputs: tuple[Array, Array, Array]) -> Array:
-        forecast, indices, weights = inputs
+    def compute_weights(inputs: tuple[Array, Array]) -> tuple[Array, Array]:
+        indices, weights = inputs
         safe_indices = jnp.maximum(indices, 0)
         active = (indices >= 0) & observed[safe_indices] & (weights > 0)
         local_anomalies = jnp.where(active[:, None], anomalies[safe_indices], 0)
@@ -150,18 +186,46 @@ def update(
         coefficients = jnp.linalg.solve(
             C, local_anomalies.T @ (precision * local_innovation)
         )
-        transform = _symmetric_inverse_sqrt(C)
+        # Interpolating W - I is equivalent to interpolating W when stencil
+        # coefficients sum to one, and preserves a no-observation identity exactly.
+        return coefficients / scale, _symmetric_inverse_sqrt(C) - identity
+
+    def analyze_coordinate(inputs: tuple[Array, Array, Array]) -> Array:
+        forecast, indices, weights = inputs
+        mean_weights, transform_increment = compute_weights((indices, weights))
         deviations = forecast - jnp.mean(forecast)
         # Express as increments so an identity transform preserves members exactly.
-        return (
-            forecast
-            + deviations @ coefficients / scale
-            + deviations @ (transform - identity)
+        return forecast + deviations @ mean_weights + deviations @ transform_increment
+
+    if weight_interpolation is None:
+        updated = jax.lax.map(
+            analyze_coordinate,
+            (predicted_ensemble.T, observation_indices, localization_weights),
+            batch_size=batch_size,
+        ).T
+    else:
+        coarse_mean_weights, coarse_transform_increments = jax.lax.map(
+            compute_weights,
+            (observation_indices, localization_weights),
+            batch_size=batch_size,
         )
 
-    updated = jax.lax.map(
-        analyze_coordinate,
-        (predicted_ensemble.T, observation_indices, localization_weights),
-        batch_size=batch_size,
-    ).T
+        def analyze_interpolated(inputs: tuple[Array, Array, Array]) -> Array:
+            forecast, indices, weights = inputs
+            safe_indices = jnp.maximum(indices, 0)
+            weights = jnp.where(indices >= 0, weights, 0)
+            mean_weights = weights @ coarse_mean_weights[safe_indices]
+            transform_increment = jnp.einsum(
+                "s,sij->ij", weights, coarse_transform_increments[safe_indices]
+            )
+            deviations = forecast - jnp.mean(forecast)
+            return (
+                forecast + deviations @ mean_weights + deviations @ transform_increment
+            )
+
+        updated = jax.lax.map(
+            analyze_interpolated,
+            (predicted_ensemble.T, interpolation_indices, interpolation_weights),
+            batch_size=batch_size,
+        ).T
     return updated, ll

@@ -13,6 +13,7 @@ from cuthbert.ensemble_kalman.types import (
     GetEnKFDynamics,
     GetEnKFObservations,
     GetLETKFLocalization,
+    GetLETKFWeightInterpolation,
     InitSample,
 )
 from cuthbert.inference import Filter
@@ -28,6 +29,7 @@ def build_filter(
     inflation: float = 0.0,
     store_predicted_ensemble: bool = False,
     batch_size: int | None = None,
+    get_weight_interpolation: GetLETKFWeightInterpolation | None = None,
 ) -> Filter:
     """Build a LETKF with a global Gaussian predictive likelihood.
 
@@ -46,7 +48,9 @@ def build_filter(
         n_particles: Ensemble size, at least two.
         get_localization: Function of model inputs returning padded observation
             indices and precision weights, both shaped
-            (x_dim, max_local_observations). Indices refer to the original
+            (n_analysis, max_local_observations). Without weight interpolation,
+            n_analysis equals x_dim; otherwise rows describe coarse analysis
+            points. Indices refer to the original
             observation order; -1 marks padding. Other indices must be in range
             and unique within each row. Weights must be finite and nonnegative;
             zero weights exclude observations. Shapes must remain fixed under JIT.
@@ -57,6 +61,15 @@ def build_filter(
         batch_size: Number of state coordinates to analyze concurrently in
             ``jax.lax.map``. ``None`` processes one coordinate at a time.
             Larger batches trade memory for parallelism.
+        get_weight_interpolation: Optional function of model inputs returning
+            coarse-analysis indices and interpolation coefficients, both shaped
+            (x_dim, stencil_size). Indices refer to the rows of
+            ``get_localization``; -1 marks padding. Other indices must be in
+            range. Coefficients must be finite, nonnegative, and sum to one over
+            nonpadding entries in each row. Both mean-analysis weights and
+            symmetric transforms are interpolated as in Yang et al. (2009).
+            ``None`` keeps the standard per-coordinate analysis. Shapes must
+            stay fixed under JIT; callers supply the interpolation geometry.
 
     Returns:
         Non-associative filter using ``EnKFState`` and the usual EnKF key handling.
@@ -85,6 +98,7 @@ def build_filter(
             get_dynamics=get_dynamics,
             get_observations=get_observations,
             get_localization=get_localization,
+            get_weight_interpolation=get_weight_interpolation,
             batch_size=batch_size,
             inflation=inflation,
             store_predicted_ensemble=store_predicted_ensemble,
@@ -102,6 +116,7 @@ def filter_combine(
     inflation: float = 0.0,
     store_predicted_ensemble: bool = False,
     batch_size: int | None = None,
+    get_weight_interpolation: GetLETKFWeightInterpolation | None = None,
 ) -> EnKFState:
     """Propagate the previous ensemble and apply a local transform analysis.
 
@@ -116,6 +131,8 @@ def filter_combine(
         store_predicted_ensemble: Whether to retain the incoming forecast ensemble.
         batch_size: Number of state coordinates to analyze concurrently, or
             ``None`` to process one at a time.
+        get_weight_interpolation: Optional callback returning coarse-analysis
+            indices and interpolation coefficients for each state coordinate.
 
     Returns:
         Updated ensemble state with cumulative global predictive log likelihood.
@@ -129,6 +146,11 @@ def filter_combine(
     )
     observation_fn, chol_R, y = get_observations(state_2.model_inputs)
     observation_indices, localization_weights = get_localization(state_2.model_inputs)
+    weight_interpolation = (
+        None
+        if get_weight_interpolation is None
+        else get_weight_interpolation(state_2.model_inputs)
+    )
     updated, ll = enkf_lib.letkf_update(
         predicted,
         observation_fn,
@@ -137,6 +159,7 @@ def filter_combine(
         observation_indices,
         localization_weights,
         batch_size=batch_size,
+        weight_interpolation=weight_interpolation,
     )
     return EnKFState(
         key=key_next,

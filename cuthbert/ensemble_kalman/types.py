@@ -77,17 +77,40 @@ class GetLETKFLocalization(Protocol):
     """Protocol for getting padded LETKF observation neighborhoods."""
 
     def __call__(self, model_inputs: ArrayTreeLike) -> tuple[Array, Array]:
-        """Get observation indices and precision weights for each state coordinate.
+        """Get observation indices and precision weights for each analysis point.
 
         Args:
             model_inputs: Current model inputs.
 
         Returns:
             Integer observation indices and finite, nonnegative weights, both
-            shaped (x_dim, max_local_observations). Indices refer to the original
+            shaped (n_analysis, max_local_observations), with n_analysis equal
+            to x_dim unless weight interpolation is enabled. With interpolation,
+            rows describe coarse analysis points. Indices refer to the original
             observation order. Use -1 for padding; other indices must be in range
             and unique within each row. Padding weights are ignored, and zero
             weights exclude observations. Shapes must remain fixed under JIT.
+        """
+        ...
+
+
+class GetLETKFWeightInterpolation(Protocol):
+    """Protocol for interpolating LETKF weights from coarse analysis points."""
+
+    def __call__(self, model_inputs: ArrayTreeLike) -> tuple[Array, Array]:
+        """Get coarse-analysis indices and interpolation coefficients.
+
+        Args:
+            model_inputs: Current model inputs.
+
+        Returns:
+            Integer indices and finite, nonnegative coefficients, both shaped
+            (x_dim, stencil_size). Indices refer to rows returned by
+            ``get_localization``; -1 marks padding. Other indices must be in
+            range. Coefficients must sum to one over nonpadding entries in
+            each row; padding coefficients are ignored. Shapes stay fixed under
+            JIT. Callers supply the interpolation geometry, such as two-point
+            linear or four-point bilinear stencils.
         """
         ...
 

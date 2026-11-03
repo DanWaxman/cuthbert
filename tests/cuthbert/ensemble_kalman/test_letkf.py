@@ -19,7 +19,10 @@ def config():
 
 
 def load_letkf_inference(
-    store_predicted_ensemble=False, log_length_scale=None, batch_size=None
+    store_predicted_ensemble=False,
+    log_length_scale=None,
+    batch_size=None,
+    interpolate_weights=False,
 ):
     F = jnp.array([[0.9, 0.1, 0.0], [0.0, 0.8, 0.1], [0.1, 0.0, 0.85]])
     c = jnp.array([0.05, -0.02, 0.03])
@@ -35,6 +38,18 @@ def load_letkf_inference(
         # rank-deficient local anomaly matrices (two observations, eight members).
         indices = indices.at[2].set(-1)
 
+    get_weight_interpolation = None
+    if interpolate_weights:
+        indices, weights = indices[jnp.array([0, 2])], weights[jnp.array([0, 2])]
+        fraction = 0.5 if log_length_scale is None else jax.nn.sigmoid(log_length_scale)
+        interpolation_indices = jnp.array([[0, -1], [0, 1], [1, -1]])
+        interpolation_weights = jnp.array(
+            [[1.0, 0.0], [1 - fraction, fraction], [1.0, 0.0]]
+        )
+
+        def get_weight_interpolation(model_inputs):
+            return interpolation_indices, interpolation_weights
+
     inference = letkf.build_filter(
         init_sample=lambda key: 0.2 + 0.6 * random.normal(key, (3,)),
         get_dynamics=lambda _: lambda x, key: F @ x + c,
@@ -44,6 +59,7 @@ def load_letkf_inference(
         inflation=0.05,
         store_predicted_ensemble=store_predicted_ensemble,
         batch_size=batch_size,
+        get_weight_interpolation=get_weight_interpolation,
     )
     return inference, ys, F, c, H, chol_R
 
@@ -98,13 +114,16 @@ class Test(chex.TestCase):
 
 
 @pytest.mark.parametrize("batch_size", [None, 2])
-def test_localized_log_likelihood_gradient(batch_size):
+@pytest.mark.parametrize("interpolate_weights", [False, True])
+def test_localized_log_likelihood_gradient(batch_size, interpolate_weights):
     init_key, filter_key = random.split(random.key(3))
 
     @jax.jit
     def log_likelihood(log_length_scale):
         inference, ys, *_ = load_letkf_inference(
-            log_length_scale=log_length_scale, batch_size=batch_size
+            log_length_scale=log_length_scale,
+            batch_size=batch_size,
+            interpolate_weights=interpolate_weights,
         )
         initial = inference.init_prepare(key=init_key)
         return filter(inference, ys, initial, key=filter_key).log_normalizing_constant[

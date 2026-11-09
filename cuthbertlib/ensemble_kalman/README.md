@@ -58,7 +58,8 @@ value constraints. NaNs in observations are masked. An empty or entirely masked
 neighborhood leaves its state coordinate unchanged.
 
 For normalized local observation anomalies $Y_\ell$, innovation $d_\ell$, and
-precision $D_\ell=\operatorname{diag}(\rho_{\ell j}/\sigma_j^2)$, the analysis forms
+precision $D_\ell=\operatorname{diag}(\rho_{\ell j}/\sigma_j^2)$, the ensemble-space
+system is
 
 $$
 C_\ell=I_N+Y_\ell^\top D_\ell Y_\ell.
@@ -66,8 +67,11 @@ $$
 
 Normalized state anomalies $X_\ell$ give the mean increment
 $X_\ell C_\ell^{-1}Y_\ell^\top D_\ell d_\ell$; unnormalized state anomalies are
-transformed by the symmetric $C_\ell^{-1/2}$. Its custom derivative remains
-finite at repeated eigenvalues, including the identity transform.
+transformed by the symmetric $C_\ell^{-1/2}$. The analysis uses `tria` on the
+augmented whitened least-squares system to compute the mean weights and factor
+$C_\ell$ without forming its Gram matrix. An SVD of the triangular factor
+gives the symmetric transform. Its first derivative remains finite at
+repeated singular values, including the identity transform.
 
 Local analyses are mapped over coordinates with bounded intermediate storage.
 The optional `batch_size` argument controls how many coordinates `jax.lax.map`

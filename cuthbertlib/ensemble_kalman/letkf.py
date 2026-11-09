@@ -6,6 +6,7 @@ https://doi.org/10.1016/j.physd.2006.11.008.
 
 import jax
 import jax.numpy as jnp
+from jax.scipy.linalg import solve_triangular
 
 from cuthbertlib.ensemble_kalman.filtering import (
     ObservationFn,
@@ -31,12 +32,59 @@ def _symmetric_inverse_sqrt_jvp(
     eigenvalues, basis = jnp.linalg.eigh(matrix)
     roots = jnp.sqrt(eigenvalues)
     value = (basis / roots) @ basis.T
-    # The divided difference of lambda ** (-1/2) has this continuous form,
-    # including equal eigenvalues. eigh symmetrizes its input, so do so here too.
     direction = (direction + direction.T) / 2
+    return value, _inverse_sqrt_tangent(basis, roots, direction)
+
+
+def _inverse_sqrt_tangent(basis: Array, roots: Array, direction: Array) -> Array:
+    """Apply the Fréchet derivative of the inverse square root."""
+    # The divided difference of lambda ** (-1/2) has this continuous form,
+    # including equal eigenvalues.
     denominator = roots[:, None] * roots[None, :] * (roots[:, None] + roots[None, :])
-    derivative = basis @ (-(basis.T @ direction @ basis) / denominator) @ basis.T
-    return value, derivative
+    return basis @ (-(basis.T @ direction @ basis) / denominator) @ basis.T
+
+
+@jax.custom_jvp
+def _symmetric_inverse_sqrt_from_factor(factor: Array) -> Array:
+    """Return the symmetric inverse square root of factor @ factor.T."""
+    basis, roots, _ = jnp.linalg.svd(factor, full_matrices=False)
+    return (basis / roots) @ basis.T
+
+
+@_symmetric_inverse_sqrt_from_factor.defjvp
+def _symmetric_inverse_sqrt_from_factor_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
+    """Differentiate through the implied Gramian without singular-value gaps."""
+    (factor,), (direction,) = primals, tangents
+    basis, roots, _ = jnp.linalg.svd(factor, full_matrices=False)
+    value = (basis / roots) @ basis.T
+    gram_direction = direction @ factor.T
+    return value, _inverse_sqrt_tangent(basis, roots, gram_direction + gram_direction.T)
+
+
+def _local_analysis(
+    whitened_anomalies: Array, whitened_innovation: Array
+) -> tuple[Array, Array]:
+    """Solve the local least-squares problem and return the symmetric transform."""
+    n_members = whitened_anomalies.shape[1]
+    dtype = jnp.result_type(whitened_anomalies, whitened_innovation)
+    # The first N rows encode [Z.T, I]. The last row encodes the target,
+    # with an extra unit column to keep the augmented matrix full row rank.
+    # QR puts the target projected onto the design basis in the last row of L.
+    augmented = jnp.concatenate(
+        (
+            jnp.concatenate(
+                (whitened_anomalies.T, whitened_innovation[None, :]), axis=0
+            ),
+            jnp.eye(n_members + 1, dtype=dtype),
+        ),
+        axis=1,
+    )
+    lower = tria(augmented)
+    factor = lower[:n_members, :n_members]
+    coefficients = solve_triangular(factor.T, lower[n_members, :n_members])
+    return coefficients, _symmetric_inverse_sqrt_from_factor(factor)
 
 
 def update(
@@ -145,12 +193,12 @@ def update(
         local_anomalies = jnp.where(active[:, None], anomalies[safe_indices], 0)
         local_innovation = jnp.where(active, innovation[safe_indices], 0)
         local_noise = jnp.where(active, noise[safe_indices], 1)
-        precision = jnp.where(active, weights, 0) / jnp.square(local_noise)
-        C = identity + local_anomalies.T @ (precision[:, None] * local_anomalies)
-        coefficients = jnp.linalg.solve(
-            C, local_anomalies.T @ (precision * local_innovation)
+        # Mask before sqrt to keep the derivative finite at excluded weights.
+        whiten = jnp.where(active, jnp.sqrt(jnp.where(active, weights, 1)), 0)
+        whiten = whiten / local_noise
+        coefficients, transform = _local_analysis(
+            whiten[:, None] * local_anomalies, whiten * local_innovation
         )
-        transform = _symmetric_inverse_sqrt(C)
         deviations = forecast - jnp.mean(forecast)
         # Express as increments so an identity transform preserves members exactly.
         return (

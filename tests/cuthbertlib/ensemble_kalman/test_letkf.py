@@ -5,7 +5,7 @@ import pytest
 from jax import random
 
 from cuthbertlib.ensemble_kalman import letkf_update
-from cuthbertlib.ensemble_kalman.letkf import _symmetric_inverse_sqrt
+from cuthbertlib.ensemble_kalman.letkf import _symmetric_inverse_sqrt_from_factor
 from tests.cuthbertlib.kalman.test_filtering import std_update
 
 
@@ -106,17 +106,21 @@ def test_localization_and_missing_observations():
 
 
 @pytest.mark.parametrize("rank_one", [False, True])
-def test_inverse_sqrt_gradient_at_repeated_eigenvalues(rank_one):
+def test_inverse_sqrt_gradient_at_repeated_singular_values(rank_one):
     direction = jnp.array([[0.2, 0.1, -0.3], [0.1, -0.1, 0.2], [-0.3, 0.2, 0.4]])
     vector = jnp.array([0.3, -0.2, 0.6])
     matrix = jnp.eye(3) + (jnp.outer(vector, vector) if rank_one else 0)
+
+    def inverse_sqrt(matrix):
+        return _symmetric_inverse_sqrt_from_factor(jnp.linalg.cholesky(matrix))
+
     value, tangent = jax.jit(
-        lambda matrix: jax.jvp(_symmetric_inverse_sqrt, (matrix,), (direction,))
+        lambda matrix: jax.jvp(inverse_sqrt, (matrix,), (direction,))
     )(matrix)
     epsilon = 1e-5
     difference = (
-        _symmetric_inverse_sqrt(matrix + epsilon * direction)
-        - _symmetric_inverse_sqrt(matrix - epsilon * direction)
+        inverse_sqrt(matrix + epsilon * direction)
+        - inverse_sqrt(matrix - epsilon * direction)
     ) / (2 * epsilon)
     chex.assert_trees_all_close(value @ matrix @ value, jnp.eye(3), atol=1e-12)
     chex.assert_trees_all_close(tangent, difference, rtol=1e-7, atol=1e-9)

@@ -192,7 +192,7 @@ def _ensemble_log_likelihood(
     )
     log_det = _log_det_from_chol(chol_R) + _log_det_from_chol(chol_C)
     y_dim = whitened_anomalies.shape[0]
-    return jnp.asarray(-0.5 * (y_dim * jnp.log(2 * jnp.pi) + log_det + quadratic_form))
+    return -0.5 * (y_dim * jnp.log(2 * jnp.pi) + log_det + quadratic_form)
 
 
 def predict(
@@ -387,7 +387,7 @@ def update(
     # Log-likelihood
     ll = multivariate_normal.logpdf(y, y_mean, chol_S, nan_support=False)
 
-    return updated, jnp.asarray(ll)
+    return updated, ll
 
 
 def _update_ensemble_subspace(

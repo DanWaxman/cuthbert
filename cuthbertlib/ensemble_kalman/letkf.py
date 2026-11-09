@@ -17,34 +17,6 @@ from cuthbertlib.types import Array, ScalarArray
 
 
 @jax.custom_jvp
-def _symmetric_inverse_sqrt(matrix: Array) -> Array:
-    """Return the symmetric inverse square root of a positive-definite matrix."""
-    eigenvalues, basis = jnp.linalg.eigh(matrix)
-    return (basis / jnp.sqrt(eigenvalues)) @ basis.T
-
-
-@_symmetric_inverse_sqrt.defjvp
-def _symmetric_inverse_sqrt_jvp(
-    primals: tuple[Array], tangents: tuple[Array]
-) -> tuple[Array, Array]:
-    """Differentiate the matrix function without eigenvalue-gap divisions."""
-    (matrix,), (direction,) = primals, tangents
-    eigenvalues, basis = jnp.linalg.eigh(matrix)
-    roots = jnp.sqrt(eigenvalues)
-    value = (basis / roots) @ basis.T
-    direction = (direction + direction.T) / 2
-    return value, _inverse_sqrt_tangent(basis, roots, direction)
-
-
-def _inverse_sqrt_tangent(basis: Array, roots: Array, direction: Array) -> Array:
-    """Apply the Fréchet derivative of the inverse square root."""
-    # The divided difference of lambda ** (-1/2) has this continuous form,
-    # including equal eigenvalues.
-    denominator = roots[:, None] * roots[None, :] * (roots[:, None] + roots[None, :])
-    return basis @ (-(basis.T @ direction @ basis) / denominator) @ basis.T
-
-
-@jax.custom_jvp
 def _symmetric_inverse_sqrt_from_factor(factor: Array) -> Array:
     """Return the symmetric inverse square root of factor @ factor.T."""
     basis, roots, _ = jnp.linalg.svd(factor, full_matrices=False)
@@ -60,7 +32,11 @@ def _symmetric_inverse_sqrt_from_factor_jvp(
     basis, roots, _ = jnp.linalg.svd(factor, full_matrices=False)
     value = (basis / roots) @ basis.T
     gram_direction = direction @ factor.T
-    return value, _inverse_sqrt_tangent(basis, roots, gram_direction + gram_direction.T)
+    gram_direction = gram_direction + gram_direction.T
+    # The divided difference of lambda**(-1/2) extends to equal eigenvalues.
+    denominator = roots[:, None] * roots[None, :] * (roots[:, None] + roots[None, :])
+    tangent = basis @ (-(basis.T @ gram_direction @ basis) / denominator) @ basis.T
+    return value, tangent
 
 
 def _local_analysis(
@@ -69,6 +45,7 @@ def _local_analysis(
     """Solve the local least-squares problem and return the symmetric transform."""
     n_members = whitened_anomalies.shape[1]
     dtype = jnp.result_type(whitened_anomalies, whitened_innovation)
+    # Hunt et al. (2007), Eq. (19), in normalized, whitened coordinates.
     # The first N rows encode [Z.T, I]. The last row encodes the target,
     # with an extra unit column to keep the augmented matrix full row rank.
     # QR puts the target projected onto the design basis in the last row of L.
@@ -82,8 +59,11 @@ def _local_analysis(
         axis=1,
     )
     lower = tria(augmented)
+    # The leading block factors I + Z.T @ Z, the scaled precision in Eq. (21).
     factor = lower[:n_members, :n_members]
+    # Eq. (20). QR gives the projected target for the triangular solve.
     coefficients = solve_triangular(factor.T, lower[n_members, :n_members])
+    # Eq. (24). The SVD recovers the symmetric transform from that factor.
     return coefficients, _symmetric_inverse_sqrt_from_factor(factor)
 
 
@@ -161,6 +141,7 @@ def update(
 
     n_particles = predicted_ensemble.shape[0]
     scale = jnp.sqrt(jnp.asarray(n_particles - 1, dtype=predicted_ensemble.dtype))
+    # Eq. (17). Apply the observation operator to each forecast member.
     y_pred = jax.vmap(observation_fn)(predicted_ensemble)
     if y_pred.shape != (n_particles, y.shape[0]):
         raise ValueError(
@@ -171,6 +152,7 @@ def update(
     # Mask before arithmetic: multiplying missing predictions by zero is not safe.
     y_pred = jnp.where(observed[None, :], y_pred, 0)
     y_mean = jnp.mean(y_pred, axis=0)
+    # Normalize the observation perturbations used in Eq. (18).
     anomalies = (y_pred - y_mean).T / scale
     innovation = jnp.where(observed, y, 0) - y_mean
     noise = jnp.broadcast_to(chol_R, y.shape)
@@ -193,6 +175,7 @@ def update(
         local_anomalies = jnp.where(active[:, None], anomalies[safe_indices], 0)
         local_innovation = jnp.where(active, innovation[safe_indices], 0)
         local_noise = jnp.where(active, noise[safe_indices], 1)
+        # Section 2.3.4 scales R^{-1} by the local precision weights.
         # Mask before sqrt to keep the derivative finite at excluded weights.
         whiten = jnp.where(active, jnp.sqrt(jnp.where(active, weights, 1)), 0)
         whiten = whiten / local_noise
@@ -200,6 +183,8 @@ def update(
             whiten[:, None] * local_anomalies, whiten * local_innovation
         )
         deviations = forecast - jnp.mean(forecast)
+        # Eqs. (22) and (25). Divide coefficients by scale to use the paper's
+        # weights with the unnormalized state perturbations.
         # Express as increments so an identity transform preserves members exactly.
         return (
             forecast

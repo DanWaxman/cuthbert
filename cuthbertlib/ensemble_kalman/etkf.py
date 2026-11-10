@@ -85,22 +85,28 @@ def update(
     density approximation, independent of the current localization weights;
     it is not an unbiased estimate of the original model's likelihood.
 
+    NaNs in ``y`` are treated as missing dimensions and are excluded from the
+    update. When ``y`` is entirely NaN, the update is a no-op: the predicted
+    ensemble is returned unchanged with zero log-likelihood contribution.
+
     With no localization, one transform is shared by all state coordinates.
     When both localization arrays are supplied, each state coordinate uses
-    its own ensemble-space transform, with
-    observation precision weighted by ``localization_weights``. NaNs in ``y``
-    indicate missing observations. Padding, zero weights, and missing entries
-    are excluded. A coordinate with no active observations is unchanged; if
-    every observation is missing, the log-likelihood contribution is zero.
+    its own ensemble-space transform, with observation precision weighted by
+    ``localization_weights``. Padding and zero weights exclude observations.
+    A coordinate with no active observations is unchanged.
 
     Args:
-        predicted_ensemble: Forecast members, shape (N, x_dim), with N >= 2.
-        observation_fn: Function mapping a state vector to shape (y_dim,).
-        chol_R: Scalar observation-noise factor or diagonal factor of shape
-            (y_dim,). Global ETKF also accepts a dense lower triangular factor
-            of shape (y_dim, y_dim). Factors for observed dimensions must be
-            finite and nonzero on the diagonal.
-        y: Nonempty observation vector, shape (y_dim,).
+        predicted_ensemble: Predicted ensemble, shape (N, x_dim).
+        observation_fn: Observation function mapping state -> obs.
+        chol_R: Generalized Cholesky factor of the observation noise covariance,
+            shape (y_dim, y_dim). Square roots that are not generalized Cholesky
+            factors, such as a symmetric R ** 0.5, are not supported.
+            A scalar (a multiple of the identity) or a 1D array of shape
+            (y_dim,) (a diagonal factor) is also supported. Localization
+            requires one of these two forms. Factors for observed dimensions
+            must be finite and nonzero on the diagonal.
+        y: Observation vector, shape (y_dim,). NaNs indicate missing dimensions.
+            The vector must be nonempty.
         observation_indices: Integer indices in the original observation order,
             shape (x_dim, max_local_observations). Use -1 for padding; other
             entries must be in range and unique within each row. Supply with
@@ -115,7 +121,7 @@ def update(
             localization and must be static under JIT.
 
     Returns:
-        Updated ensemble of shape (N, x_dim) and the global predictive log density.
+        Tuple of (updated_ensemble, log_likelihood).
 
     Raises:
         ValueError: If the ensemble has fewer than two members, indices are not

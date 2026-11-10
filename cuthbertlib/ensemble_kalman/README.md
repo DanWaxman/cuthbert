@@ -10,7 +10,7 @@ This sub-repository provides modular functions for ensemble Kalman methods, incl
 
 The core functions are:
 
-- `predict`: Propagate ensemble members through nonlinear dynamics with additive Gaussian noise.
+- `predict`: Propagate ensemble members through nonlinear dynamics.
 - `filter_update`: Update ensemble members with an observation using the EnKF update equation.
 - `etkf_update`: Apply a global or local ensemble transform and compute a global Gaussian predictive log density.
 - `smoother_update`: Apply one Ensemble Rauch-Tung-Striebel smoother update.
@@ -41,60 +41,16 @@ Both localization hooks below are rejected with `ensemble_subspace=True`, as the
 ## Ensemble transform filtering
 
 <!-- --8<-- [start:etkf] -->
-`etkf_update` performs a deterministic symmetric square-root analysis and
-returns the updated ensemble and one global Gaussian predictive log density.
-It accepts a forecast ensemble, an observation function, an observation-noise
-factor `chol_R`, and observations. By default it applies one global transform
-and accepts scalar, diagonal vector, and dense lower triangular noise factors.
+The predict step for the ETKF is the same as the EnKF, and the filters differ only in their `update` step; for the ETKF, we provide the `etkf_update`. By default, this performs a global ensemble transform update, and applies localized analyses if `observation_indices` and `localization_weights` are supplied. 
 
-Supply both `observation_indices` and `localization_weights` to use the local
-analysis of [Hunt et al. (2007)](https://doi.org/10.1016/j.physd.2006.11.008).
-The local path requires a scalar or diagonal vector noise factor.
-The analysis needs no random key. Use `predict` for forecast sampling and inflation.
+The global ensemble transform computes the symmetric square root factor $C^{-1/2}$, where $C = I_N + Y^\top R^{-1}Y$ and $Y$ is the matrix of centered forecast observation deviations divided by $\sqrt{N-1}$. The implementation uses `tria` to obtain a triangular factor $L$ of $C$ from the whitened deviations and the identity. The SVD $L = U\Sigma V^\top$ then gives $C^{-1/2} = U\Sigma^{-1}U^\top$. The update right-multiplies the forecast state deviations by $C^{-1/2}$ and shifts the ensemble mean by $XC^{-1}Y^\top R^{-1}(y-\bar h)$, where $X$ is the matrix of centered forecast state deviations divided by $\sqrt{N-1}$.
 
-Indices and weights have shape `(x_dim, max_local_observations)`, with one row
-per state coordinate. Indices use the original observation order, with `-1` for
-padding; other indices must be in range and unique within each row. Weights
-must be finite and nonnegative. Padding weights are ignored, and zero weights
-exclude observations. Shapes are checked statically; callers must ensure these
-value constraints. NaNs in observations are masked. An empty or entirely masked
-neighborhood leaves its state coordinate unchanged.
+Indices and weights have shape `(x_dim, max_local_observations)` to determine local observations to be used in analysis. Indices use the original observation order (i.e., before pivoting for missingness). To pad (when `|local_observations| < max_local_observations`), one may pad with `-1` values. Weights must be finite and nonnegative, and non-padded indices must be valid and unique. 
 
-For normalized local observation anomalies $Y_\ell$, innovation $d_\ell$, and
-precision $D_\ell=\operatorname{diag}(\rho_{\ell j}/\sigma_j^2)$, the ensemble-space
-system is
+For localized analysis, batching is supported via the `batch_size` parameter, which is used to `jax.lax.map` over analyses. The default is `None`, which does no batching.
 
-$$
-C_\ell=I_N+Y_\ell^\top D_\ell Y_\ell.
-$$
+Each update returns one global Gaussian predictive log density $\log\mathcal N(y;\bar h,R+YY^\top)$, where $y$ is the observation vector, $\bar h$ is the forecast observation ensemble mean, and $R$ is the original observation-noise covariance. All terms are restricted to observed dimensions. The high-level filter sums these scores over time to approximate the log marginal likelihood.
 
-Normalized state anomalies $X_\ell$ give the mean increment
-$X_\ell C_\ell^{-1}Y_\ell^\top D_\ell d_\ell$; unnormalized state anomalies are
-transformed by the symmetric $C_\ell^{-1/2}$. The analysis uses `tria` on the
-augmented whitened least-squares system to compute the mean weights and factor
-$C_\ell$ without forming its Gram matrix. An SVD of the triangular factor
-gives the symmetric transform. Its first derivative remains finite at
-repeated singular values, including the identity transform. The global update
-uses the same system with the full observation precision and reuses its factor
-to score the forecast.
-
-Local analyses are mapped over coordinates with bounded intermediate storage.
-The optional `batch_size` argument controls how many coordinates `jax.lax.map`
-analyzes concurrently. It defaults to `None` (one coordinate at a time), must
-be static under JIT, and trades increased memory use for parallelism. A final
-partial batch is handled automatically.
-For at most $m$ observations per coordinate, their cost is
-$\mathcal O(x_{\rm dim}(mN^2+N^3))$. The full observation function is evaluated
-once per ensemble member. Global scoring costs
-$\mathcal O(y_{\rm dim}N^2+N^3)$ using ensemble-space factors, without forming a
-dense observation covariance or state-observation cross-covariance.
-
-The score is $\log\mathcal N(y;\bar h,R+YY^\top)$ for the full normalized
-observation anomaly matrix $Y$, excluding missing dimensions. It uses the
-original observation noise and is independent of the current localization
-weights. This normalized global Gaussian approximation is not an unbiased model
-likelihood estimate. Local densities are never summed, and an entirely missing
-observation returns the forecast ensemble and zero log density.
 <!-- --8<-- [end:etkf] -->
 
 ## Ensemble Rauch-Tung-Striebel smoothing

@@ -26,49 +26,13 @@ See Algorithm 2 in Appendix A in [Calvello, Reich, and Stuart., Ensemble Kalman 
 ## Ensemble transform Kalman filter
 
 <!-- --8<-- [start:etkf] -->
-The Ensemble Transform Kalman Filter (ETKF) uses the same simulator and
-forecast inflation convention as the EnKF, then applies a deterministic
-symmetric square-root analysis.
+The stochastic EnKF (i.e., with `perturbed_obs=True`) provides correct analysis for linear-Gaussian models in the limit of infinite particles at the cost of Monte Carlo noise. We can obtain deterministic estimates with `perturbed_obs=False`, but this typically underestimates covariances.
 
-`ensemble_transform_kalman_filter.build_filter` accepts `init_sample`,
-`get_dynamics`, `get_observations`, and `n_particles` as in the EnKF. By
-default, one global analysis transform applies to the entire ensemble.
-Pass `get_localization(model_inputs)` to use the Local Ensemble Transform
-Kalman Filter (LETKF) of
-[Hunt, Kostelich, and Szunyogh (2007)](https://doi.org/10.1016/j.physd.2006.11.008).
-The callback returns observation indices and precision weights, both shaped
-`(x_dim, max_local_observations)`.
-Each row defines the observations affecting one state coordinate. Indices refer
-to the original observation order; use `-1` for padding. Nonpadding indices must
-be in range and unique within a row. Weights must be finite and nonnegative;
-padding weights are ignored and zero weights exclude observations. These value
-constraints are caller requirements. Shapes remain fixed under JIT, while
-neighborhood indices and weights may vary over time. The existing `gaspari_cohn`
-and `gaussian` utilities can construct weights from local distances.
+So-called square-root EnKF variants are determinsitic versions of the EnKF that apply the correct covariance estimate in the linear, infinite-particle case. `cuthbert` provides one such algorithm, the ensemble transform Kalman filter (ETKF; [Bishop, Etherton, and Majumdar (2001)](https://doi.org/10.1175/1520-0493%282001%29129%3C0420%3AASWTET%3E2.0.CO%3B2)), and its localized equivalent the LETKF ([Hunt, Kostelich, and Szunyogh (2007)](https://doi.org/10.1016/j.physd.2006.11.008)).
 
-For global ETKF, the observation callback may return a scalar `chol_R`, a
-diagonal vector, or a dense lower triangular factor. Localized ETKF supports scalar and
-diagonal vector factors.
-NaNs in observations are excluded from both the analysis and the likelihood.
-Coordinates with no active observations preserve their forecast members.
+The ETKF follows a similar predict/update step evolution to the ensemble subspace EnKF, but computes a covariance to update ensemble members deterministically. The LETKF, however, performs localization quite differently than the EnKF: it computes a localized analysis step in each dimension of the state, using only observations local to that state estimate. In other words, the LETKF essentially performs a separate analysis step in each state dimension.
 
-The returned filter uses `EnKFState`, explicit initialization and random keys,
-and sequential `cuthbert.filter(..., parallel=False)` execution. Forecast
-deviations are multiplied by `1 + inflation`. As with the EnKF,
-`store_predicted_ensemble=True` retains the incoming forecast in each state.
-With localization, set `batch_size` on the builder to analyze that many state coordinates in
-parallel within each `jax.lax.map` batch. The default `None` processes one
-coordinate at a time; larger batches use more memory. A final partial batch is
-handled automatically.
-
-**Likelihood.** `log_normalizing_constant` accumulates the global Gaussian
-predictive log density of the full forecast observation ensemble, evaluated
-before each analysis. The observation covariance is the sample forecast
-covariance plus the original observation-noise covariance. Each observation is
-scored once; neighborhood scores are never summed. Localization affects later
-forecasts, but does not directly change the current forecast's score. This is a
-normalized predictive density approximation, not an unbiased estimate of the
-original model likelihood. An entirely missing observation contributes zero.
+**Likelihood.** Because it uses separate local analyses, it is not straightforward to determine what `log_normalizing_constant` should be in the LETKF. We choose to accumulate the global Gaussian predictive log density of the full forecast observation ensemble, evaluated before each analysis.
 <!-- --8<-- [end:etkf] -->
 
 ## Ensemble Rauch-Tung-Striebel smoother

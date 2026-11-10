@@ -73,8 +73,8 @@ class ModifyCrossCovariance(Protocol):
         ...
 
 
-class GetLETKFLocalization(Protocol):
-    """Protocol for getting padded LETKF observation neighborhoods."""
+class GetETKFLocalization(Protocol):
+    """Protocol for getting padded ETKF observation neighborhoods."""
 
     def __call__(self, model_inputs: ArrayTreeLike) -> tuple[Array, Array]:
         """Get observation indices and precision weights for each state coordinate.

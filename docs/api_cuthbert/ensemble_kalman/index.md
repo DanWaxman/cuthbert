@@ -4,6 +4,6 @@ Ensemble Kalman methods are a class of sequential Monte Carlo methods for filter
 sequential Monte Carlo methods, ensemble Kalman methods do not use importance weights.
 
 - [Ensemble Kalman Filtering](ensemble_kalman_filter.md)
-- [Local Ensemble Transform Kalman Filtering](local_ensemble_transform_kalman_filter.md)
+- [Ensemble Transform Kalman Filtering](ensemble_transform_kalman_filter.md)
 - [Ensemble Rauch-Tung-Striebel smoothing](ensemble_rts_smoother.md)
 - [Callback types](types.md)

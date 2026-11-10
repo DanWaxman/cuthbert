@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import pytest
 from jax import random
 
-from cuthbertlib.ensemble_kalman import letkf_update
-from cuthbertlib.ensemble_kalman.letkf import _symmetric_inverse_sqrt_from_factor
+from cuthbertlib.ensemble_kalman import etkf_update
+from cuthbertlib.ensemble_kalman.etkf import _symmetric_inverse_sqrt_from_factor
 from tests.cuthbertlib.kalman.test_filtering import std_update
 
 
@@ -27,7 +27,7 @@ def test_update_matches_kalman(diagonal, batch_size):
     indices = jnp.broadcast_to(jnp.arange(2), (3, 2))
 
     updated, ll = jax.jit(
-        letkf_update, static_argnames=("observation_fn", "batch_size")
+        etkf_update, static_argnames=("observation_fn", "batch_size")
     )(
         ensemble,
         lambda x: H @ x + offset,
@@ -37,6 +37,10 @@ def test_update_matches_kalman(diagonal, batch_size):
         jnp.ones((3, 2)),
         batch_size=batch_size,
     )
+    global_update = jax.jit(etkf_update, static_argnames="observation_fn")(
+        ensemble, lambda x: H @ x + offset, chol_R, y
+    )
+    chex.assert_trees_all_close(global_update, (updated, ll), atol=1e-12, rtol=1e-12)
     expected_mean, expected_cov, expected_ll = std_update(
         ensemble.mean(0),
         jnp.cov(ensemble.T),
@@ -64,7 +68,7 @@ def test_localization_and_missing_observations():
         return x.at[1].set(jnp.nan)
 
     update = jax.jit(
-        lambda y, indices, weights: letkf_update(
+        lambda y, indices, weights: etkf_update(
             ensemble, observation_fn, chol_R, y, indices, weights
         )
     )
@@ -126,3 +130,34 @@ def test_inverse_sqrt_gradient_at_repeated_singular_values(rank_one):
     chex.assert_trees_all_close(tangent, difference, rtol=1e-7, atol=1e-9)
     if not rank_one:
         chex.assert_trees_all_close(tangent, -0.5 * direction, atol=1e-12)
+
+
+def test_global_update_with_correlated_noise_and_missing_observations():
+    ensemble = random.normal(random.key(9), (8, 3))
+    H = jnp.array([[1.0, 0.1, 0.0], [0.0, 0.5, 1.0], [0.1, 0.2, -0.4]])
+    chol_R = jnp.array([[0.4, 0.0, 0.0], [0.3, 0.7, 0.0], [0.1, 0.2, 0.5]])
+    update = jax.jit(lambda y: etkf_update(ensemble, lambda x: H @ x, chol_R, y))
+    for y in (jnp.array([jnp.nan, -0.1, 0.5]), jnp.array([0.3, -0.1, 0.5])):
+        updated, ll = update(y)
+        expected = std_update(
+            ensemble.mean(0), jnp.cov(ensemble.T), H, jnp.zeros(3), chol_R @ chol_R.T, y
+        )
+        chex.assert_trees_all_close(
+            (updated.mean(0), jnp.cov(updated.T), ll), expected, atol=1e-10, rtol=1e-10
+        )
+
+    chex.assert_trees_all_equal(
+        update(jnp.full(3, jnp.nan)), (ensemble, jnp.array(0.0))
+    )
+
+
+def test_update_requires_both_localization_arrays():
+    ensemble = jnp.ones((3, 1))
+    with pytest.raises(ValueError, match="Supply both"):
+        etkf_update(
+            ensemble,
+            lambda x: x,
+            jnp.array(0.5),
+            jnp.array([0.0]),
+            observation_indices=jnp.array([[0]]),
+        )

@@ -1,4 +1,4 @@
-"""Implements the high-level Local Ensemble Transform Kalman Filter (LETKF)."""
+"""Implements the high-level Ensemble Transform Kalman Filter (ETKF)."""
 
 from functools import partial
 
@@ -12,7 +12,7 @@ from cuthbert.ensemble_kalman.ensemble_kalman_filter import (
 from cuthbert.ensemble_kalman.types import (
     GetEnKFDynamics,
     GetEnKFObservations,
-    GetLETKFLocalization,
+    GetETKFLocalization,
     InitSample,
 )
 from cuthbert.inference import Filter
@@ -24,15 +24,15 @@ def build_filter(
     get_dynamics: GetEnKFDynamics,
     get_observations: GetEnKFObservations,
     n_particles: int,
-    get_localization: GetLETKFLocalization,
+    get_localization: GetETKFLocalization | None = None,
     inflation: float = 0.0,
     store_predicted_ensemble: bool = False,
     batch_size: int | None = None,
 ) -> Filter:
-    """Build a LETKF with a global Gaussian predictive likelihood.
+    """Build an ETKF with optional localization and a global Gaussian predictive likelihood.
 
-    The analysis deterministically transforms the forecast ensemble at each
-    state coordinate using its local observations. The log normalizing constant
+    The analysis deterministically transforms the forecast ensemble. Providing
+    localization applies a separate transform at each state coordinate. The log normalizing constant
     accumulates a global Gaussian forecast density, rather than a sum of local
     scores. This is an approximate model likelihood, not an unbiased estimator.
 
@@ -41,22 +41,25 @@ def build_filter(
         get_dynamics: Function of model inputs returning a simulator
             ``(state, key) -> next_state``.
         get_observations: Function of model inputs returning the observation
-            function, scalar or 1D diagonal ``chol_R``, and observation vector.
+            function, noise factor ``chol_R``, and observation vector. Global
+            ETKF accepts a scalar, diagonal vector, or lower triangular matrix.
+            Localized ETKF requires a scalar or diagonal vector.
             NaNs in the observation vector indicate missing dimensions.
         n_particles: Ensemble size, at least two.
-        get_localization: Function of model inputs returning padded observation
+        get_localization: Optional function of model inputs returning padded observation
             indices and precision weights, both shaped
             (x_dim, max_local_observations). Indices refer to the original
             observation order; -1 marks padding. Other indices must be in range
             and unique within each row. Weights must be finite and nonnegative;
             zero weights exclude observations. Shapes must remain fixed under JIT.
+            ``None`` selects global ETKF.
         inflation: Forecast deviations are multiplied by ``1 + inflation``,
             following the EnKF convention.
         store_predicted_ensemble: Whether to retain the incoming forecast ensemble
             in each state, following the EnKF convention.
         batch_size: Number of state coordinates to analyze concurrently in
             ``jax.lax.map``. ``None`` processes one coordinate at a time.
-            Larger batches trade memory for parallelism.
+            Larger batches trade memory for parallelism. Applies only when localization is enabled.
 
     Returns:
         Non-associative filter using ``EnKFState`` and the usual EnKF key handling.
@@ -65,7 +68,7 @@ def build_filter(
         ValueError: If ``n_particles`` is less than two.
     """
     if n_particles < 2:
-        raise ValueError("n_particles must be at least 2 for LETKF.")
+        raise ValueError("n_particles must be at least 2 for ETKF.")
 
     return Filter(
         init_prepare=partial(
@@ -98,12 +101,12 @@ def filter_combine(
     state_2: EnKFState,
     get_dynamics: GetEnKFDynamics,
     get_observations: GetEnKFObservations,
-    get_localization: GetLETKFLocalization,
+    get_localization: GetETKFLocalization | None = None,
     inflation: float = 0.0,
     store_predicted_ensemble: bool = False,
     batch_size: int | None = None,
 ) -> EnKFState:
-    """Propagate the previous ensemble and apply a local transform analysis.
+    """Propagate the previous ensemble and apply a global or local transform analysis.
 
     Args:
         state_1: Previous filter state.
@@ -111,11 +114,11 @@ def filter_combine(
         get_dynamics: Function getting the state simulator from model inputs.
         get_observations: Function getting the observation function, noise factor,
             and observation vector from model inputs.
-        get_localization: Function getting local indices and precision weights.
+        get_localization: Optional function getting local indices and precision weights.
         inflation: Multiplicative forecast anomaly inflation, as in EnKF.
         store_predicted_ensemble: Whether to retain the incoming forecast ensemble.
         batch_size: Number of state coordinates to analyze concurrently, or
-            ``None`` to process one at a time.
+            ``None`` to process one at a time. Applies only when localization is enabled.
 
     Returns:
         Updated ensemble state with cumulative global predictive log likelihood.
@@ -128,8 +131,12 @@ def filter_combine(
         inflation,
     )
     observation_fn, chol_R, y = get_observations(state_2.model_inputs)
-    observation_indices, localization_weights = get_localization(state_2.model_inputs)
-    updated, ll = enkf_lib.letkf_update(
+    observation_indices, localization_weights = (
+        (None, None)
+        if get_localization is None
+        else get_localization(state_2.model_inputs)
+    )
+    updated, ll = enkf_lib.etkf_update(
         predicted,
         observation_fn,
         chol_R,

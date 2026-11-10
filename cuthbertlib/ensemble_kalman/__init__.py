@@ -1,3 +1,4 @@
+from cuthbertlib.ensemble_kalman.etkf import update as etkf_update
 from cuthbertlib.ensemble_kalman.filtering import (
     ConstructCholInnovationCovariance,
     CrossCovarianceModifier,
@@ -7,7 +8,6 @@ from cuthbertlib.ensemble_kalman.filtering import (
 from cuthbertlib.ensemble_kalman.filtering import (
     update as filter_update,
 )
-from cuthbertlib.ensemble_kalman.letkf import update as letkf_update
 from cuthbertlib.ensemble_kalman.localization import (
     construct_tapered_chol_innovation_covariance,
     gaspari_cohn,

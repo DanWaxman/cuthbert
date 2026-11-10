@@ -4,7 +4,7 @@ The core atomic functions are in [`cuthbertlib.ensemble_kalman.filtering`](../..
 and [`cuthbertlib.ensemble_kalman.smoothing`](../../cuthbertlib/ensemble_kalman/smoothing.py). The
 high-level interfaces are in
 [`cuthbert.ensemble_kalman.ensemble_kalman_filter`](ensemble_kalman_filter.py),
-[`cuthbert.ensemble_kalman.local_ensemble_transform_kalman_filter`](local_ensemble_transform_kalman_filter.py), and
+[`cuthbert.ensemble_kalman.ensemble_transform_kalman_filter`](ensemble_transform_kalman_filter.py), and
 [`cuthbert.ensemble_kalman.ensemble_rts_smoother`](ensemble_rts_smoother.py).
 
 ## Ensemble Kalman filter
@@ -23,19 +23,21 @@ The EnKF allows for storing its predicted states, $x_{t \mid t - 1}$, through th
 See Algorithm 2 in Appendix A in [Calvello, Reich, and Stuart., Ensemble Kalman Methods: A Mean Field Perspective](https://arxiv.org/abs/2209.11371) for the EnKF algorithm which accomodates non-linear observation functions $h$. Note that this algorithm corresponds to the `perturbed_obs = True (Default)` option in the EnKF implementation. This boolean flag is represented by `s` in Algorithm 10.2 of [Sanz-Alonso et al., *Inverse Problems and Data Assimilation*](https://arxiv.org/abs/1810.06191), which was only written for linear $h$.
 <!-- --8<-- [end:enkf] -->
 
-## Local ensemble transform Kalman filter
+## Ensemble transform Kalman filter
 
-<!-- --8<-- [start:letkf] -->
-The Local Ensemble Transform Kalman Filter (LETKF) propagates an ensemble using
-the same simulator and inflation convention as the EnKF, then applies a
-deterministic ensemble-space square-root analysis at each state coordinate.
-It uses the symmetric transform described by
+<!-- --8<-- [start:etkf] -->
+The Ensemble Transform Kalman Filter (ETKF) uses the same simulator and
+forecast inflation convention as the EnKF, then applies a deterministic
+symmetric square-root analysis.
+
+`ensemble_transform_kalman_filter.build_filter` accepts `init_sample`,
+`get_dynamics`, `get_observations`, and `n_particles` as in the EnKF. By
+default, one global analysis transform applies to the entire ensemble.
+Pass `get_localization(model_inputs)` to use the Local Ensemble Transform
+Kalman Filter (LETKF) of
 [Hunt, Kostelich, and Szunyogh (2007)](https://doi.org/10.1016/j.physd.2006.11.008).
-
-`local_ensemble_transform_kalman_filter.build_filter` accepts `init_sample`,
-`get_dynamics`, `get_observations`, and `n_particles` as in the EnKF, plus a
-`get_localization(model_inputs)` callback. This callback returns observation
-indices and precision weights, both shaped `(x_dim, max_local_observations)`.
+The callback returns observation indices and precision weights, both shaped
+`(x_dim, max_local_observations)`.
 Each row defines the observations affecting one state coordinate. Indices refer
 to the original observation order; use `-1` for padding. Nonpadding indices must
 be in range and unique within a row. Weights must be finite and nonnegative;
@@ -44,9 +46,9 @@ constraints are caller requirements. Shapes remain fixed under JIT, while
 neighborhood indices and weights may vary over time. The existing `gaspari_cohn`
 and `gaussian` utilities can construct weights from local distances.
 
-The observation callback must return a scalar `chol_R` or a 1D diagonal factor of
-length `y_dim`; dense factors, including dense diagonal matrices, are not
-supported. Observation noise covariance is `chol_R ** 2` on the diagonal.
+For global ETKF, the observation callback may return a scalar `chol_R`, a
+diagonal vector, or a dense lower triangular factor. Localized ETKF supports scalar and
+diagonal vector factors.
 NaNs in observations are excluded from both the analysis and the likelihood.
 Coordinates with no active observations preserve their forecast members.
 
@@ -54,20 +56,20 @@ The returned filter uses `EnKFState`, explicit initialization and random keys,
 and sequential `cuthbert.filter(..., parallel=False)` execution. Forecast
 deviations are multiplied by `1 + inflation`. As with the EnKF,
 `store_predicted_ensemble=True` retains the incoming forecast in each state.
-Set `batch_size` on the builder to analyze that many state coordinates in
+With localization, set `batch_size` on the builder to analyze that many state coordinates in
 parallel within each `jax.lax.map` batch. The default `None` processes one
 coordinate at a time; larger batches use more memory. A final partial batch is
 handled automatically.
 
 **Likelihood.** `log_normalizing_constant` accumulates the global Gaussian
 predictive log density of the full forecast observation ensemble, evaluated
-before each local analysis. The observation covariance is the sample forecast
+before each analysis. The observation covariance is the sample forecast
 covariance plus the original observation-noise covariance. Each observation is
 scored once; neighborhood scores are never summed. Localization affects later
 forecasts, but does not directly change the current forecast's score. This is a
 normalized predictive density approximation, not an unbiased estimate of the
 original model likelihood. An entirely missing observation contributes zero.
-<!-- --8<-- [end:letkf] -->
+<!-- --8<-- [end:etkf] -->
 
 ## Ensemble Rauch-Tung-Striebel smoother
 

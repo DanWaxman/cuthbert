@@ -2,7 +2,7 @@
 
 The high-level interfaces built on these functions are in
 [`cuthbert.ensemble_kalman.ensemble_kalman_filter`](../../cuthbert/ensemble_kalman/ensemble_kalman_filter.py),
-[`cuthbert.ensemble_kalman.local_ensemble_transform_kalman_filter`](../../cuthbert/ensemble_kalman/local_ensemble_transform_kalman_filter.py), and
+[`cuthbert.ensemble_kalman.ensemble_transform_kalman_filter`](../../cuthbert/ensemble_kalman/ensemble_transform_kalman_filter.py), and
 [`cuthbert.ensemble_kalman.ensemble_rts_smoother`](../../cuthbert/ensemble_kalman/ensemble_rts_smoother.py).
 
 <!-- --8<-- [start:overview] -->
@@ -12,7 +12,7 @@ The core functions are:
 
 - `predict`: Propagate ensemble members through nonlinear dynamics with additive Gaussian noise.
 - `filter_update`: Update ensemble members with an observation using the EnKF update equation.
-- `letkf_update`: Apply local ensemble transforms and compute a global Gaussian predictive log density.
+- `etkf_update`: Apply a global or local ensemble transform and compute a global Gaussian predictive log density.
 - `smoother_update`: Apply one Ensemble Rauch-Tung-Striebel smoother update.
 - `construct_tapered_chol_innovation_covariance`: Construct a tapered innovation covariance factor without forming the covariance densely.
 - `gaspari_cohn`: Construct covariance tapers with the Gaspari-Cohn correlation function.
@@ -38,16 +38,19 @@ Both localization hooks below are rejected with `ensemble_subspace=True`, as the
 
 <!-- --8<-- [end:filtering] -->
 
-## Local ensemble transform filtering
+## Ensemble transform filtering
 
-<!-- --8<-- [start:letkf] -->
-`letkf_update` performs the deterministic Local Ensemble Transform Kalman Filter
-(LETKF) analysis of [Hunt et al. (2007)](https://doi.org/10.1016/j.physd.2006.11.008).
-It accepts a forecast ensemble, observation function, scalar or 1D diagonal
-observation-noise factor `chol_R`, observations, and padded local observation
-indices and weights. It returns the updated ensemble and one global Gaussian
-predictive log density. The analysis needs no random key; use `predict` for
-forecast sampling and inflation.
+<!-- --8<-- [start:etkf] -->
+`etkf_update` performs a deterministic symmetric square-root analysis and
+returns the updated ensemble and one global Gaussian predictive log density.
+It accepts a forecast ensemble, an observation function, an observation-noise
+factor `chol_R`, and observations. By default it applies one global transform
+and accepts scalar, diagonal vector, and dense lower triangular noise factors.
+
+Supply both `observation_indices` and `localization_weights` to use the local
+analysis of [Hunt et al. (2007)](https://doi.org/10.1016/j.physd.2006.11.008).
+The local path requires a scalar or diagonal vector noise factor.
+The analysis needs no random key. Use `predict` for forecast sampling and inflation.
 
 Indices and weights have shape `(x_dim, max_local_observations)`, with one row
 per state coordinate. Indices use the original observation order, with `-1` for
@@ -71,7 +74,9 @@ transformed by the symmetric $C_\ell^{-1/2}$. The analysis uses `tria` on the
 augmented whitened least-squares system to compute the mean weights and factor
 $C_\ell$ without forming its Gram matrix. An SVD of the triangular factor
 gives the symmetric transform. Its first derivative remains finite at
-repeated singular values, including the identity transform.
+repeated singular values, including the identity transform. The global update
+uses the same system with the full observation precision and reuses its factor
+to score the forecast.
 
 Local analyses are mapped over coordinates with bounded intermediate storage.
 The optional `batch_size` argument controls how many coordinates `jax.lax.map`
@@ -90,7 +95,7 @@ original observation noise and is independent of the current localization
 weights. This normalized global Gaussian approximation is not an unbiased model
 likelihood estimate. Local densities are never summed, and an entirely missing
 observation returns the forecast ensemble and zero log density.
-<!-- --8<-- [end:letkf] -->
+<!-- --8<-- [end:etkf] -->
 
 ## Ensemble Rauch-Tung-Striebel smoothing
 

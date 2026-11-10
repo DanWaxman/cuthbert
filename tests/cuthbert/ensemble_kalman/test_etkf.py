@@ -6,7 +6,7 @@ from absl.testing import parameterized
 from jax import random
 
 from cuthbert import filter
-from cuthbert.ensemble_kalman import local_ensemble_transform_kalman_filter as letkf
+from cuthbert.ensemble_kalman import ensemble_transform_kalman_filter as etkf
 from cuthbertlib.ensemble_kalman import gaussian
 from tests.cuthbertlib.kalman.test_filtering import std_update
 
@@ -18,8 +18,11 @@ def config():
     jax.config.update("jax_enable_x64", False)
 
 
-def load_letkf_inference(
-    store_predicted_ensemble=False, log_length_scale=None, batch_size=None
+def load_etkf_inference(
+    store_predicted_ensemble=False,
+    log_length_scale=None,
+    batch_size=None,
+    localized=True,
 ):
     F = jnp.array([[0.9, 0.1, 0.0], [0.0, 0.8, 0.1], [0.1, 0.0, 0.85]])
     c = jnp.array([0.05, -0.02, 0.03])
@@ -35,12 +38,12 @@ def load_letkf_inference(
         # rank-deficient local anomaly matrices (two observations, eight members).
         indices = indices.at[2].set(-1)
 
-    inference = letkf.build_filter(
+    inference = etkf.build_filter(
         init_sample=lambda key: 0.2 + 0.6 * random.normal(key, (3,)),
         get_dynamics=lambda _: lambda x, key: F @ x + c,
         get_observations=lambda y: (lambda x: H @ x, chol_R, y),
         n_particles=8,
-        get_localization=lambda _: (indices, weights),
+        get_localization=(lambda _: (indices, weights)) if localized else None,
         inflation=0.05,
         store_predicted_ensemble=store_predicted_ensemble,
         batch_size=batch_size,
@@ -50,10 +53,14 @@ def load_letkf_inference(
 
 class Test(chex.TestCase):
     @chex.variants(with_jit=True, without_jit=True)
-    @parameterized.product(store_predicted_ensemble=[False, True], batch_size=[None, 2])
-    def test_filter(self, store_predicted_ensemble, batch_size):
-        inference, ys, F, c, H, chol_R = load_letkf_inference(
-            store_predicted_ensemble, batch_size=batch_size
+    @parameterized.product(
+        store_predicted_ensemble=[False, True],
+        analysis=[(False, None), (True, None), (True, 2)],
+    )
+    def test_filter(self, store_predicted_ensemble, analysis):
+        localized, batch_size = analysis
+        inference, ys, F, c, H, chol_R = load_etkf_inference(
+            store_predicted_ensemble, batch_size=batch_size, localized=localized
         )
         init_key, filter_key = random.split(random.key(2))
         initial = inference.init_prepare(key=init_key)
@@ -103,7 +110,7 @@ def test_localized_log_likelihood_gradient(batch_size):
 
     @jax.jit
     def log_likelihood(log_length_scale):
-        inference, ys, *_ = load_letkf_inference(
+        inference, ys, *_ = load_etkf_inference(
             log_length_scale=log_length_scale, batch_size=batch_size
         )
         initial = inference.init_prepare(key=init_key)

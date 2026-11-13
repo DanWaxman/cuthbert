@@ -43,7 +43,7 @@ Both localization hooks below are rejected with `ensemble_subspace=True`, as the
 <!-- --8<-- [start:etkf] -->
 The predict step for the ETKF is the same as the EnKF, and the filters differ only in their `update` step; for the ETKF, we provide the `etkf_update`. By default, this performs a global ensemble transform update, and applies localized analyses if `observation_indices` and `localization_weights` are supplied. 
 
-The global ensemble transform computes the symmetric square root factor $C^{-1/2}$, where $C = I_N + Y^\top R^{-1}Y$ and $Y$ is the matrix of centered forecast observation deviations divided by $\sqrt{N-1}$. The implementation uses `tria` to obtain a triangular factor $L$ of $C$ from the whitened deviations and the identity. The SVD $L = U\Sigma V^\top$ then gives $C^{-1/2} = U\Sigma^{-1}U^\top$. The update right-multiplies the forecast state deviations by $C^{-1/2}$ and shifts the ensemble mean by $XC^{-1}Y^\top R^{-1}(y-\bar h)$, where $X$ is the matrix of centered forecast state deviations divided by $\sqrt{N-1}$.
+The global ensemble transform computes the symmetric square root factor $C^{-1/2}$, where $C = I_N + Y^\top R^{-1}Y$ and $Y$ is the matrix of centered forecast observation deviations divided by $\sqrt{N-1}$. We obtain a generalized Cholesky factor $L$ via `tria`, then form the square root factor via SVD. 
 
 Indices and weights have shape `(x_dim, max_local_observations)` to determine local observations to be used in analysis. Indices use the original observation order (i.e., before pivoting for missingness). To pad (when `|local_observations| < max_local_observations`), one may pad with `-1` values. Weights must be finite and nonnegative, and non-padded indices must be valid and unique. 
 

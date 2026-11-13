@@ -83,11 +83,12 @@ class GetETKFLocalization(Protocol):
             model_inputs: Current model inputs.
 
         Returns:
-            Integer observation indices and finite, nonnegative weights, both
-            shaped (x_dim, max_local_observations). Indices refer to the original
-            observation order. Use -1 for padding; other indices must be in range
-            and unique within each row. Padding weights are ignored, and zero
-            weights exclude observations. Shapes must remain fixed under JIT.
+            Tuple of (observation_indices, localization_weights), each with shape
+            (x_dim, max_local_observations). Indices refer to the states in the neighborhood
+            of a particular state, and localization_weights are the weights used for the
+            analysis steps. Indices are in the original observation order (i.e., before any
+            pivoting done for missing observations). When a state has less neighbors than
+            max_local_observations, the remaining indices should be padded with -1.
         """
         ...
 

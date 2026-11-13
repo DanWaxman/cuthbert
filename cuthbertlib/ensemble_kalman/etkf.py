@@ -11,9 +11,10 @@ from jax.scipy.linalg import solve_triangular
 from cuthbertlib.ensemble_kalman.filtering import (
     ObservationFn,
     _ensemble_log_likelihood,
+    _prepare_observations,
     _whiten,
 )
-from cuthbertlib.linalg import collect_nans_chol, tria
+from cuthbertlib.linalg import tria
 from cuthbertlib.types import Array, ScalarArray
 
 
@@ -180,19 +181,12 @@ def update(
     # Normalize the observation perturbations used in Eq. (18).
     anomalies = (y_pred - y_mean).T / scale
     innovation = jnp.where(observed, y, 0) - y_mean
-    # Missing dimensions cancel their own Gaussian normalization, as in EnKF.
-    if chol_R.ndim == 2:
-        chol_R = chol_R.astype(jnp.result_type(chol_R, 1.0))
-        score_noise, innovation, anomalies = jax.lax.cond(
-            jnp.all(observed),
-            lambda args: args,
-            lambda args: collect_nans_chol(~observed, *args)[1:],
-            (chol_R, innovation, anomalies),
-        )
-    else:
-        score_noise = jnp.where(observed, chol_R, 1 / jnp.sqrt(2 * jnp.pi))
-    whitened_anomalies = _whiten(score_noise, anomalies)
-    whitened_innovation = _whiten(score_noise, innovation)
+    # Retain the original observation order for local neighborhood indices.
+    score_noise, score_innovation, score_anomalies = _prepare_observations(
+        ~observed, chol_R, innovation, anomalies
+    )
+    whitened_anomalies = _whiten(score_noise, score_anomalies)
+    whitened_innovation = _whiten(score_noise, score_innovation)
     identity = jnp.eye(n_particles, dtype=whitened_anomalies.dtype)
 
     def apply_transform(

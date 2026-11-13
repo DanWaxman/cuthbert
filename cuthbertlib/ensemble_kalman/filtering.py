@@ -36,6 +36,34 @@ def no_covariance_modifier(covariance: Array) -> Array:
     return covariance
 
 
+def _prepare_observations(
+    missing: Array, chol_R: Array, vector: Array, matrix: Array
+) -> tuple[Array, Array, Array]:
+    """Group observed dimensions first and zero missing observation terms.
+
+    Args:
+        missing: Boolean missing-observation mask, shape (y_dim,).
+        chol_R: Scalar, diagonal vector, or dense lower triangular noise factor.
+        vector: Observation vector or innovation, shape (y_dim,).
+        matrix: Observation ensemble or anomalies, shape (y_dim, N).
+
+    Returns:
+        Reordered noise factor, vector, and matrix. Missing dimensions have zero
+        vector and matrix entries and noise factor 1 / sqrt(2 * pi), canceling
+        their Gaussian normalization. Scalar noise factors become vectors.
+        Dense factors are refactored only when observations are missing.
+    """
+    chol_R = jnp.asarray(chol_R, dtype=jnp.result_type(chol_R, 1.0))
+    if chol_R.ndim == 2:
+        return jax.lax.cond(
+            jnp.any(missing),
+            lambda args: collect_nans_chol(missing, *args)[1:],
+            lambda args: args,
+            (chol_R, vector, matrix),
+        )
+    return collect_nans_chol(missing, chol_R, vector, matrix)[1:]
+
+
 def _whiten(chol_R: Array, V: Array) -> Array:
     """Apply the inverse observation-noise factor, ``chol_R^{-1} @ V``.
 
@@ -433,19 +461,7 @@ def _update_ensemble_subspace(
 
     # Handle partially-missing observations by reordering and zeroing missing dims.
     # Use y_pred.T because y_pred is (N, y_dim) and we want to reorder along axis 0.
-    missing = jnp.isnan(y)
-    if jnp.ndim(chol_R) == 2:
-        # Refactoring a dense factor is O(y_dim ** 3); skip it when nothing is missing.
-        # Scalar and 1D factors are handled in O(y_dim), and a scalar is promoted to 1D,
-        # so an identity branch would not match shapes there.
-        chol_R, y, y_pred = jax.lax.cond(
-            jnp.any(missing),
-            lambda args: collect_nans_chol(missing, *args)[1:],
-            lambda args: args,
-            (chol_R, y, y_pred.T),
-        )
-    else:
-        _, chol_R, y, y_pred = collect_nans_chol(missing, chol_R, y, y_pred.T)
+    chol_R, y, y_pred = _prepare_observations(jnp.isnan(y), chol_R, y, y_pred.T)
     y_pred = y_pred.T
     y_dim = y.shape[0]
 

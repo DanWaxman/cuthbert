@@ -31,6 +31,14 @@ def config():
     jax.config.update("jax_enable_x64", False)
 
 
+@pytest.fixture
+def dtype(request):
+    previous = jax.config.x64_enabled
+    jax.config.update("jax_enable_x64", request.param == jnp.float64)
+    yield request.param
+    jax.config.update("jax_enable_x64", previous)
+
+
 def _load_taylor_init_and_dynamics(
     m0: Array,
     chol_P0: Array,
@@ -504,9 +512,11 @@ def test_offline_filter_potential(seed, x_dim, num_time_steps):
     "associative,parallel", [(False, False), (True, False), (True, True)]
 )
 @pytest.mark.parametrize("loading", [0.0, 1.0])
-def test_poisson_potential_evidence(associative, parallel, loading):
-    counts = jnp.array([2.0, 3.0, 7.0])
-    anchor = jnp.zeros(1)
+@pytest.mark.parametrize("log_rate", [-20.0, 0.6931471805599453])
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64], indirect=True)
+def test_poisson_potential_evidence(associative, parallel, loading, log_rate, dtype):
+    counts = jnp.array([2.0, 3.0, 7.0], dtype=dtype)
+    anchor = jnp.zeros(1, dtype=dtype)
     variance = 0.25
 
     def prior(x):
@@ -546,12 +556,156 @@ def test_poisson_potential_evidence(associative, parallel, loading):
             - 0.5 * jnp.log1p(variance * curvature)
         )
 
-    log_rate = jnp.log(2.0)
-    (total, increments), score = jax.value_and_grad(evidence, has_aux=True)(log_rate)
+    log_rate = jnp.asarray(log_rate, dtype=dtype)
+    (total, increments), score = jax.jit(jax.value_and_grad(evidence, has_aux=True))(
+        log_rate
+    )
     expected = expected_increments(log_rate)
     expected_score = jax.grad(lambda b: expected_increments(b).sum())(log_rate)
     chex.assert_trees_all_close(
-        (total, increments, score), (expected.sum(), expected, expected_score)
+        (total, increments, score),
+        (expected.sum(), expected, expected_score),
+        rtol=2e-5 if dtype == jnp.float32 else 1e-7,
+        atol=2e-5 if dtype == jnp.float32 else 1e-7,
+    )
+
+
+@pytest.mark.parametrize(
+    "associative,parallel", [(False, False), (True, False), (True, True)]
+)
+@pytest.mark.parametrize(
+    "dtype,bias",
+    [(jnp.float32, -10.0), (jnp.float32, 0.6931471805599453), (jnp.float64, -20.0)],
+    indirect=["dtype"],
+)
+def test_poisson_potential_evidence_correlated_dynamics(
+    associative, parallel, dtype, bias
+):
+    # Nonzero dynamics and off-centre anchors also exercise associative composition.
+    counts = jnp.array([1.0, 3.0, 2.0])
+    anchors = jnp.array([0.2, -0.4, 0.1])
+
+    def prior(x):
+        return jax.scipy.stats.norm.logpdf(x, loc=0.7, scale=0.5**0.5).sum()
+
+    def dynamics(state, inputs):
+        def log_density(prev, x):
+            return jax.scipy.stats.norm.logpdf(x, loc=0.8 * prev + 0.3, scale=0.5).sum()
+
+        return log_density, jnp.zeros(1), jnp.zeros(1)
+
+    def evidence(b):
+        def observation(state, inputs):
+            count, anchor = inputs
+
+            def log_potential(x):
+                eta = b + x[0]
+                return count * eta - jnp.exp(eta) - jax.scipy.special.gammaln(count + 1)
+
+            return log_potential, anchor[None]
+
+        alg = taylor.build_filter(
+            prior, jnp.zeros(1), dynamics, observation, associative=associative
+        )
+        states = filter(alg, (counts, anchors), alg.init_prepare(), parallel=parallel)
+        return states.log_normalizing_constant[-1], (
+            states.mean[:, 0],
+            jnp.square(states.chol_cov[:, 0, 0]),
+            states.log_normalizing_constant,
+        )
+
+    def expected(b):
+        mean, variance, ell = 0.7, 0.5, 0.0
+        means, variances, ells = (
+            [jnp.asarray(mean)],
+            [jnp.asarray(variance)],
+            [jnp.asarray(ell)],
+        )
+        for count, anchor in zip(counts, anchors):
+            mean, variance = 0.8 * mean + 0.3, 0.8**2 * variance + 0.25
+            eta = b + anchor
+            curvature = jnp.exp(eta)
+            value = count * eta - curvature - jax.scipy.special.gammaln(count + 1)
+            gradient = count - curvature
+            residual = mean - anchor
+            score = gradient - curvature * residual
+            denominator = 1.0 + variance * curvature
+            updated_variance = variance / denominator
+            ell += (
+                value
+                + gradient * residual
+                - 0.5 * curvature * residual**2
+                + 0.5 * updated_variance * score**2
+                - 0.5 * jnp.log1p(variance * curvature)
+            )
+            mean, variance = mean + updated_variance * score, updated_variance
+            means.append(mean)
+            variances.append(variance)
+            ells.append(ell)
+        return ell, tuple(jnp.stack(xs) for xs in (means, variances, ells))
+
+    actual = jax.jit(jax.value_and_grad(evidence, has_aux=True))(jnp.asarray(bias))
+    reference = jax.value_and_grad(expected, has_aux=True)(jnp.asarray(bias))
+    chex.assert_trees_all_close(actual, reference, rtol=2e-5, atol=2e-5)
+
+
+@pytest.mark.parametrize("active", [(0, 1, 2), (0, 1), (0, 2), (1, 2)])
+def test_potential_evidence_active_coordinates(active):
+    from cuthbert.gaussian.taylor.non_associative_filter import (
+        _potential_log_evidence,
+        process_observation,
+    )
+
+    active = jnp.array(active)
+    mean = jnp.array([0.2, -0.7, 0.5])
+    chol_cov = jnp.array([[1.0, 0.0, 0.0], [0.4, 0.8, 0.0], [-0.2, 0.3, 0.7]])
+    target = jnp.array([0.1, 0.8, -0.6])[active]
+    covariance = jnp.array([[0.7, 0.1, 0.2], [0.1, 1.3, -0.1], [0.2, -0.1, 0.9]])
+    covariance = covariance[active[:, None], active]
+    anchor = jnp.array([-0.3, 0.2, 0.6])
+
+    def evidence(offset):
+        def potential(x):
+            return offset + jax.scipy.stats.multivariate_normal.logpdf(
+                x[active], target, covariance
+            )
+
+        _, d, chol_R, observation, metadata = process_observation(
+            (potential, anchor), ignore_nan_dims=True
+        )
+        return _potential_log_evidence(
+            mean, chol_cov, d, chol_R, observation, metadata, jnp.asarray(-123.0)
+        )
+
+    offset = jnp.asarray(1.7)
+    prior_covariance = chol_cov @ chol_cov.T
+    reference = offset + jax.scipy.stats.multivariate_normal.logpdf(
+        target, mean[active], covariance + prior_covariance[active[:, None], active]
+    )
+    actual, gradient = jax.jit(jax.value_and_grad(evidence))(offset)
+    chex.assert_trees_all_close((actual, gradient), (reference, jnp.asarray(1.0)))
+
+
+def test_potential_evidence_singular_fallback():
+    from cuthbert.gaussian.taylor.non_associative_filter import (
+        _potential_log_evidence,
+        _TaylorPotential,
+    )
+
+    def evidence(value):
+        return _potential_log_evidence(
+            jnp.zeros(2),
+            jnp.eye(2),
+            jnp.ones(2),
+            jnp.diag(jnp.array([1.0, 0.0])),
+            jnp.zeros(2),
+            _TaylorPotential(jnp.zeros(2), value),
+            jnp.asarray(-3.0),
+        )
+
+    actual, gradient = jax.jit(jax.value_and_grad(evidence))(jnp.asarray(1.0))
+    chex.assert_trees_all_close(
+        (actual, gradient), (jnp.asarray(-3.0), jnp.asarray(0.0))
     )
 
 

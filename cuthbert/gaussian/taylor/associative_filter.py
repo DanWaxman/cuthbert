@@ -144,14 +144,19 @@ def filter_prepare(
     chol_Q = jnp.where(skip_predict_flag, jnp.zeros_like(chol_Q), chol_Q)
 
     observation_output = get_observation_func(dummy_state, model_inputs)
-    H, d, chol_R, observation, correction = non_associative_filter.process_observation(
+    H, d, chol_R, observation, potential = non_associative_filter.process_observation(
         observation_output,
         rtol=rtol,
         ignore_nan_dims=ignore_nan_dims,
     )
 
     elem = filtering.associative_params_single(F, c, chol_Q, H, d, chol_R, observation)
-    elem = elem._replace(ell=elem.ell + correction)
+    if potential is not None:
+        # ell is the local log integral conditional on the previous state being 0.
+        ell = non_associative_filter._potential_log_evidence(
+            c, chol_Q, d, chol_R, observation, potential, elem.ell
+        )
+        elem = elem._replace(ell=ell)
 
     return LinearizedKalmanFilterState(
         elem=elem,

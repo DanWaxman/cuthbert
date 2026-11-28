@@ -20,6 +20,9 @@ $$
 
 where $c$ matches the log potential at the expansion point and contributes to the
 log evidence when $L L^T$ is nonsingular on the active coordinates.
+The evidence is evaluated directly from the anchored quadratic, avoiding
+cancellation between the Gaussian log evidence and a large scale correction
+when the potential has weak curvature.
 
 See `cuthbertlib.linearize` for more details.
 

@@ -1,7 +1,10 @@
 """Implements the non-associative linearized Taylor Kalman filter."""
 
+from typing import NamedTuple
+
 from jax import ShapeDtypeStruct, tree
 from jax import numpy as jnp
+from jax.scipy.linalg import solve_triangular
 
 from cuthbert.gaussian.taylor.types import (
     GetDynamicsLogDensity,
@@ -15,8 +18,14 @@ from cuthbert.utils import dummy_tree_like
 from cuthbertlib.kalman import filtering
 from cuthbertlib.linalg import block_marginal_sqrt_cov
 from cuthbertlib.linearize import linearize_log_density, linearize_taylor
-from cuthbertlib.stats import multivariate_normal
 from cuthbertlib.types import Array, ArrayLike, ArrayTreeLike, KeyArray, LogDensity
+
+
+class _TaylorPotential(NamedTuple):
+    """Expansion point and log value of a Taylor observation potential."""
+
+    anchor: Array
+    log_value: Array
 
 
 def process_observation(
@@ -24,8 +33,32 @@ def process_observation(
     | tuple[LogPotential, Array],
     rtol: float | None = None,
     ignore_nan_dims: bool = False,
-) -> tuple[Array, Array, Array, Array, Array]:
-    """Prepare the Gaussian observation and its log evidence correction."""
+) -> tuple[Array, Array, Array, Array, _TaylorPotential | None]:
+    r"""Prepare a Gaussian observation, retaining the scale of a log potential.
+
+    Conditional log densities produce the usual observation parameters and no
+    potential metadata. A log potential instead produces a pseudo-observation
+    with $H=-I$, $y=0$, mean $d$ and covariance $R=LL^\top$. On active coordinates
+    with nonsingular covariance, its approximation is
+
+    $$
+    \log G(x) \approx \log G(a)
+      + (d-a)^\top R^{-1}(x-a) - \tfrac12(x-a)^\top R^{-1}(x-a).
+    $$
+
+    The expansion point $a$ and value $\log G(a)$ are retained so that evidence
+    can be evaluated without subtracting large completed-square terms when
+    curvature is weak. The covariance factor defines the effective curvature,
+    including the regularisation performed by `linearize_taylor`.
+
+    An all-NaN expansion point skips the observation, including its log value.
+    With `ignore_nan_dims=True`, NaN covariance diagonals mark inactive
+    coordinates; a constant potential still contributes its log value.
+
+    Returns:
+        Observation matrix, offset, covariance factor, observation, and optional
+        Taylor potential metadata for evaluating the log evidence.
+    """
     if len(observation_output) == 3:
         observation_cond_log_density, linearization_point, observation = (
             observation_output
@@ -37,7 +70,7 @@ def process_observation(
             rtol=rtol,
             ignore_nan_dims=ignore_nan_dims,
         )
-        return H, d, chol_R, observation, jnp.zeros((), dtype=d.dtype)
+        return H, d, chol_R, observation, None
 
     observation_log_potential, linearization_point = observation_output
     skip = jnp.isnan(linearization_point).all()
@@ -58,26 +91,61 @@ def process_observation(
     H = -jnp.eye(d.shape[0])
     missing = skip | (ignore_nan_dims & jnp.isnan(jnp.diag(chol_R)))
     observation = jnp.where(missing, jnp.nan, 0.0)
+    potential = _TaylorPotential(anchor, jnp.where(skip, 0.0, value))
+    return H, d, chol_R, observation, potential
 
+
+def _potential_log_evidence(
+    mean: Array,
+    chol_cov: Array,
+    d: Array,
+    chol_R: Array,
+    observation: Array,
+    potential: _TaylorPotential,
+    fallback: Array,
+) -> Array:
+    r"""Integrate the anchored quadratic against a Gaussian without cancellation.
+
+    Let $A=L_R^{-1}L_P$, $s=L_R^{-1}(\mu-a)$ and $z=L_R^{-1}(d-a)$.
+    For $B=I+A^\top A$ and $u=A^\top(z-s)$, the log integral is
+
+    $$
+    \log G(a)+z^\top s-\tfrac12s^\top s
+      -\tfrac12\log\det B+\tfrac12u^\top B^{-1}u.
+    $$
+
+    This never forms the large $z^\top z$ term. Masking uses the active block
+    of the existing Taylor factor, so the evidence and state update use the
+    same approximation. Singular or nonfinite active factors retain the
+    uncorrected Gaussian evidence, matching the previous fallback.
+    """
+    missing = jnp.isnan(observation)
     # The active block of the Taylor factor is already lower triangular.
     active_factor = jnp.where(missing[:, None] | missing[None, :], 0.0, chol_R)
-    apply_correction = (
-        ~skip
-        & jnp.isfinite(active_factor).all()
-        & jnp.all(missing | (jnp.diag(active_factor) != 0))
+    valid = jnp.isfinite(active_factor).all() & jnp.all(
+        missing | (jnp.diag(active_factor) != 0)
     )
-    # A padded coordinate has log density zero at residual zero.
-    ignored = missing | ~apply_correction
-    padding_scale = jnp.asarray((2 * jnp.pi) ** -0.5, dtype=chol_R.dtype)
-    factor = jnp.where(apply_correction, active_factor, 0.0) + jnp.diag(
-        jnp.where(ignored, padding_scale, 0.0)
+    ignored = missing | ~valid
+    factor = jnp.where(valid, active_factor, 0.0) + jnp.diag(
+        ignored.astype(chol_R.dtype)
     )
-    residual = jnp.where(ignored, 0.0, anchor - d)
-    gaussian_value = multivariate_normal.logpdf(
-        residual, jnp.zeros_like(residual), factor, nan_support=False
+    A = solve_triangular(factor, jnp.where(ignored[:, None], 0.0, chol_cov), lower=True)
+    s = solve_triangular(
+        factor, jnp.where(ignored, 0.0, mean - potential.anchor), lower=True
     )
-    correction = jnp.where(apply_correction, value - gaussian_value, 0.0)
-    return H, d, chol_R, observation, correction
+    z = solve_triangular(
+        factor, jnp.where(ignored, 0.0, d - potential.anchor), lower=True
+    )
+    chol_B = jnp.linalg.cholesky(jnp.eye(A.shape[1], dtype=A.dtype) + A.T @ A)
+    whitened_u = solve_triangular(chol_B, A.T @ (z - s), lower=True)
+    ell = (
+        potential.log_value
+        + z @ s
+        - 0.5 * (s @ s)
+        - jnp.log(jnp.diag(chol_B)).sum()
+        + 0.5 * (whitened_u @ whitened_u)
+    )
+    return jnp.where(valid, ell, fallback)
 
 
 def init_prepare(
@@ -245,7 +313,7 @@ def filter_combine(
 
     observation_output = get_observation_func(predict_state, state_2.model_inputs)
 
-    H, d, chol_R, observation, correction = process_observation(
+    H, d, chol_R, observation, potential = process_observation(
         observation_output,
         rtol=rtol,
         ignore_nan_dims=ignore_nan_dims,
@@ -258,8 +326,17 @@ def filter_combine(
         d,
         chol_R,
         observation,
-        log_normalizing_constant=correction,
     )
+    if potential is not None:
+        log_normalizing_constant = _potential_log_evidence(
+            predict_mean,
+            predict_chol_cov,
+            d,
+            chol_R,
+            observation,
+            potential,
+            log_normalizing_constant,
+        )
 
     return linearized_kalman_filter_state_dummy_elem(
         mean=update_mean,

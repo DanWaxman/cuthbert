@@ -25,7 +25,28 @@ def process_observation(
     rtol: float | None = None,
     ignore_nan_dims: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array]:
-    """Prepare the Gaussian observation and its log evidence correction."""
+    r"""Prepare a Gaussian observation for the Taylor Kalman update.
+
+    Returns a tuple with parameters for a Gaussian pseudo-observation. For
+    a `LogPotential` input, an additional correction term $\log G(x_0) - \log q(x_0)$
+    is computed, where $G$ is the potential and $q$ is the Gaussian pseudo-potential.
+    Adding this correction to the log normalizing constant ensures that constant factors
+    to the log normalizing constant are properly accounted for.
+
+    Args:
+        observation_output: Either `(log_conditional_density, point, observation)`
+            or `(log_potential, point)` for a unary observation potential.
+        rtol: Relative singular-value cutoff for inverting precision matrices
+            during linearization.
+        ignore_nan_dims: Whether to treat coordinates with NaN on the diagonal
+            of the precision matrix as missing.
+
+    Returns:
+        Tuple `(H, d, chol_R, y, correction)` with the observation matrix, offset,
+            square-root noise covariance, observation or pseudo-observation, and
+            additive log-evidence correction. The correction is zero for conditional
+            densities, skipped observations, or singular or non-finite active factors.
+    """
     if len(observation_output) == 3:
         observation_cond_log_density, linearization_point, observation = (
             observation_output
